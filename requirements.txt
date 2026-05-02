@@ -11,7 +11,7 @@ numpy
 
 beautifulsoup4
 requests
-pandas-ta
+pandas_ta
 matplotlib
 seaborn
 scikit-learn
