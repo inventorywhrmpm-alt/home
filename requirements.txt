@@ -8,6 +8,13 @@ streamlit
 yfinance
 pandas
 numpy
-pandas_ta
+
 beautifulsoup4
 requests
+pandas-ta
+matplotlib
+seaborn
+scikit-learn
+joblib
+streamlit
+yfinance
