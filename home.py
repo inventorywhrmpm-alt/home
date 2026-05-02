@@ -39,12 +39,13 @@ st.markdown("""
 # 3. Header Area
 
 # 4. Fitur Utama (Layout Kolom)
-col1, col2, col3 ,col4= st.columns(4)
+col1, col2, col3, col4 = st.columns(4)
 
 with col1:
     st.info("### 📱 App")
     st.write("Visualisasi data interaktif menggunakan Plotly untuk insight yang lebih tajam.")
-    st.page_link("idxhome.streamlit.app/pages/app.py", label="Buka Aplikasi", icon="🔥")
+    # PERBAIKAN: Gunakan path file lokal, bukan URL website
+    st.page_link("pages/app.py", label="Buka Aplikasi", icon="🔥")
 
 with col2:
     st.warning("### 📈 Wyckoff")
