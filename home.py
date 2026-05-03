@@ -74,7 +74,14 @@ with col6:
     st.warning("### 📈 AI Divergence")
     st.write("analisis harga saham Berdasrkan Berdasrkan deteksi Divergnce.")
     st.page_link("pages/aidivergen.py", label="AI Divergnce", icon="📈")
-
+with col7:
+    st.warning("### 📈 KalmandTrend")
+    st.write("analisis harga saham Berdasrkan Berdasrkan deteksi Klamandtrendlevel.")
+    st.page_link("pages/kalmandtredlevel.py", label="AI Divergnce", icon="📈")
+with col8:
+    st.warning("### 📈 Supertrend")
+    st.write("analisis harga saham Berdasrkan Berdasrkan deteksi Superternd.")
+    st.page_link("pages/supertrend.py", label="AI Divergnce", icon="📈")
 st.divider()
 # 5. Tambahkan Informasi Tambahan di Bawah
 with st.expander("ℹ️ Tentang Sistem Ini"):
