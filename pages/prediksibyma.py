@@ -81,7 +81,7 @@ if not data.empty and len(data) > 100:
     fig.add_trace(go.Scatter(x=data.index, y=data['MA100'], name="MA100", line=dict(color='red', width=2)), row=1, col=1)
 
     # 2. Volume
-    fig.add_trace(go.Bar(x=data.index, y=data['Volume'], name="Volume", marker_color='gray', opacity=0.4), row=2, col=1)
+    fig.add_trace(go.Bar(x=data.index, y=data['Volume'], name="Volume", marker_color='red', opacity=0.4), row=2, col=1)
 
     # 3. RSI
     fig.add_trace(go.Scatter(x=data.index, y=data['RSI'], name="RSI", line=dict(color='purple')), row=3, col=1)
