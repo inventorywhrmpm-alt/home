@@ -77,11 +77,11 @@ with col6:
 with col7:
     st.warning("### 📈 KalmandTrend")
     st.write("analisis harga saham Berdasrkan Berdasrkan deteksi Klamandtrendlevel.")
-    st.page_link("pages/kalmandtredlevel.py", label="AI Divergnce", icon="📈")
+    st.page_link("pages/kalmandtrendlevel.py", label="AI Kalmand", icon="📈")
 with col8:
     st.warning("### 📈 Supertrend")
     st.write("analisis harga saham Berdasrkan Berdasrkan deteksi Superternd.")
-    st.page_link("pages/suppertrend.py", label="AI Divergnce", icon="📈")
+    st.page_link("pages/suppertrend.py", label="AI Suppertrend", icon="📈")
 st.divider()
 # 5. Tambahkan Informasi Tambahan di Bawah
 with st.expander("ℹ️ Tentang Sistem Ini"):
