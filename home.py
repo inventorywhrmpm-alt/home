@@ -71,7 +71,7 @@ with col5:
     st.page_link("pages/prediksibyma.py", label="MA Predict", icon="📈")
     
 with col6:
-    st.primary("### 📈 AI Divergence")
+    st.secondary("### 📈 AI Divergence")
     st.write("analisis harga saham Berdasrkan Berdasrkan deteksi Divergnce.")
     st.page_link("pages/prediksibyma.py", label="AI Divergnce", icon="📈")
 
