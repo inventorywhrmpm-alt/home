@@ -72,15 +72,15 @@ with col5:
     
 with col6:
     st.warning("### 📈 AI Divergence")
-    st.write("analisis harga saham Berdasrkan Berdasrkan deteksi Divergnce.")
+    st.write("analisis harga saham Berdasarkan deteksi Divergnce.")
     st.page_link("pages/aidivergen.py", label="AI Divergnce", icon="📈")
 with col7:
     st.warning("### 📈 KalmandTrend")
-    st.write("analisis harga saham Berdasrkan Berdasrkan deteksi Klamandtrendlevel.")
+    st.write("analisis harga saham Berdasarkan deteksi Klamandtrendlevel.")
     st.page_link("pages/kalmandtrendlevel.py", label="AI Kalmand", icon="📈")
 with col8:
     st.warning("### 📈 Supertrend")
-    st.write("analisis harga saham Berdasrkan Berdasrkan deteksi Superternd.")
+    st.write("analisis harga saham Berdasarkan deteksi Superternd.")
     st.page_link("pages/suppertrend.py", label="AI Suppertrend", icon="📈")
 st.divider()
 # 5. Tambahkan Informasi Tambahan di Bawah
