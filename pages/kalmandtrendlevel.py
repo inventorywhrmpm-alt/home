@@ -9,7 +9,7 @@ st.set_page_config(page_title="Kalman Trend IDX", layout="wide")
 # Fungsi Kalman Filter (Logika BigBeluga)
 def kalman_filter(src, length, R=0.01, Q=0.1):
     if len(src) == 0: return pd.Series([])
-    src_values = src.values # Mengambil nilai murni agar tidak bentrok dengan index
+    src_values = src.values
     estimate = src_values[0]
     error_est = 1.0
     error_meas = R * length
@@ -24,7 +24,7 @@ def kalman_filter(src, length, R=0.01, Q=0.1):
     return pd.Series(estimates, index=src.index)
 
 def analyze_trend(df, short_len, long_len):
-    # Hitung Kalman & Bulatkan (Hapus desimal)
+    # Hitung Kalman & Bulatkan ke Integer
     df['Short_K'] = kalman_filter(df['Close'], short_len).round(0).astype(int)
     df['Long_K'] = kalman_filter(df['Close'], long_len).round(0).astype(int)
     df['Price'] = df['Close'].round(0).astype(int)
@@ -32,7 +32,7 @@ def analyze_trend(df, short_len, long_len):
     # Logika Trend
     df['Trend_Up'] = df['Short_K'] > df['Long_K']
     
-    # Sinyal Buy/Sell (Hanya perpotongan)
+    # Sinyal Buy/Sell (Hanya saat perpotongan)
     df['Signal'] = ""
     mask_buy = (df['Trend_Up']) & (~df['Trend_Up'].shift(1).fillna(False))
     mask_sell = (~df['Trend_Up']) & (df['Trend_Up'].shift(1).fillna(False))
@@ -52,14 +52,11 @@ st.title("📈 Kalman Trend Analysis")
 
 # Sidebar
 st.sidebar.header("Pencarian & Parameter")
-ticker_raw = st.sidebar.text_input("Kode Saham (Contoh: BBCA)", value="BBCA").upper().strip()
+ticker_raw = st.sidebar.text_input("Kode Saham (Contoh: BBRI)", value="BBCA").upper().strip()
 
-# Proteksi agar tidak dobel .JK
+# Proteksi .JK
 if ticker_raw:
-    if ticker_raw.endswith(".JK"):
-        ticker_full = ticker_raw
-    else:
-        ticker_full = f"{ticker_raw}.JK"
+    ticker_full = ticker_raw if ticker_raw.endswith(".JK") else f"{ticker_raw}.JK"
 else:
     ticker_full = ""
 
@@ -70,40 +67,40 @@ l_len = st.sidebar.slider("Long Length", 50, 300, 150)
 if ticker_full:
     try:
         with st.spinner(f'Fetching {ticker_full}...'):
-            # Ambil data dengan auto_adjust agar tidak ada kolom Adj Close yang mengganggu
             data = yf.download(ticker_full, period=period, progress=False, auto_adjust=True)
         
         if data is not None and not data.empty:
-            # Perbaikan untuk masalah Multi-index yfinance terbaru
+            # Handle Multi-index
             if isinstance(data.columns, pd.MultiIndex):
                 data.columns = data.columns.get_level_values(0)
             
-            # Reset index jika perlu untuk memastikan Close ada
             df_proc = data.copy()
-            
             result = analyze_trend(df_proc, s_len, l_len)
             
-            # Tampilan Metric
+            # Tampilan Ringkasan
             last_row = result.iloc[-1]
             c1, c2, c3 = st.columns(3)
             c1.metric("Ticker", ticker_full)
             c2.metric("Last Price", f"{int(last_row['Price'])}")
-            c3.metric("Current Status", last_row['Status'])
+            c3.metric("Status", last_row['Status'])
 
             # Tabel History
             st.subheader(f"History Tabel: {ticker_raw}")
             show_df = result[['Price', 'Short_K', 'Long_K', 'Signal', 'Status']].tail(30).copy()
-            show_df = show_df.iloc[::-1] # Terbaru di atas
+            show_df.index = show_df.index.date # Bersihkan jam agar hanya tanggal
+            show_df = show_df.iloc[::-1]
 
+            # FUNGSI STYLE TERBARU (Menggunakan .map bukan .applymap)
             def style_rows(val):
                 if "BULLISH" in val: return 'color: #13bd6e; font-weight: bold'
                 if "BEARISH" in val: return 'color: #af0d4b; font-weight: bold'
                 return ''
 
-            st.table(show_df.style.applymap(style_rows, subset=['Status']))
+            # Perubahan penting: .style.map (untuk pandas terbaru)
+            st.table(show_df.style.map(style_rows, subset=['Status']))
             
         else:
-            st.error(f"Gagal menarik data untuk {ticker_full}. Pastikan koneksi internet aktif.")
+            st.error(f"Gagal menarik data {ticker_full}. Cek koneksi internet.")
             
     except Exception as e:
         st.error(f"Terjadi Kesalahan: {e}")
