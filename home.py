@@ -64,10 +64,17 @@ with col4:
 st.divider()
 # 5. Fitur Utama (Layout Kolom)
 col5, col6, col7, col8 = st.columns(4)
+
 with col5:
     st.success("### 🚀 Predict MA")
     st.write("analisis harga saham Berdasrkan MA 5, 20, 50 dan 100 + RSI.")
     st.page_link("pages/prediksibyma.py", label="MA Predict", icon="📈")
+    
+with col6:
+    st.primary("### 📈 AI Divergence")
+    st.write("analisis harga saham Berdasrkan Berdasrkan deteksi Divergnce.")
+    st.page_link("pages/prediksibyma.py", label="AI Divergnce", icon="📈")
+
 st.divider()
 # 5. Tambahkan Informasi Tambahan di Bawah
 with st.expander("ℹ️ Tentang Sistem Ini"):
