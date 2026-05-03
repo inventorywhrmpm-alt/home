@@ -1,5 +1,5 @@
 import streamlit as st
-pandas_ta as pd
+pandas-ta as pd
 import numpy as np
 import yfinance as yf
 
