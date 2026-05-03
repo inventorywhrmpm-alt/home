@@ -68,7 +68,7 @@ with col5:
     st.success("### 🚀 Predict MA")
     st.write("analisis harga saham Berdasrkan MA 5, 20, 50 dan 100 + RSI.")
     st.page_link("pages/prediksibyma.py", label="MA Predict", icon="📈")
-
+st.divider()
 # 5. Tambahkan Informasi Tambahan di Bawah
 with st.expander("ℹ️ Tentang Sistem Ini"):
     st.write("""
