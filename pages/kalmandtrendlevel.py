@@ -1,106 +1,104 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
+import pandas_ta as ta
+import plotly.graph_objects as go
 import yfinance as yf
 
-# --- KONFIGURASI HALAMAN ---
-st.set_page_config(page_title="Kalman Trend IDX", layout="wide")
+# --- FUNGSI LOGIC SUPERTREND (SAMA SEPERTI SEBELUMNYA) ---
+def calculate_supertrend(df, period=10, multiplier=3.0):
+    atr = ta.atr(df['High'], df['Low'], df['Close'], length=period)
+    src = (df['High'] + df['Low']) / 2
+    df['up'] = src - (multiplier * atr)
+    df['dn'] = src + (multiplier * atr)
+    df['trend'] = 1
+    df['st'] = 0.0
 
-# Fungsi Kalman Filter (Logika BigBeluga)
-def kalman_filter(src, length, R=0.01, Q=0.1):
-    if len(src) == 0: return pd.Series([])
-    src_values = src.values
-    estimate = src_values[0]
-    error_est = 1.0
-    error_meas = R * length
-    estimates = []
-    
-    for val in src_values:
-        prediction = estimate
-        kalman_gain = error_est / (error_est + error_meas)
-        estimate = prediction + kalman_gain * (val - prediction)
-        error_est = (1 - kalman_gain) * error_est + Q / length
-        estimates.append(estimate)
-    return pd.Series(estimates, index=src.index)
+    for i in range(1, len(df)):
+        prev_close = df.loc[df.index[i-1], 'Close']
+        # Up Trend
+        curr_up = df.loc[df.index[i], 'up']
+        prev_up = df.loc[df.index[i-1], 'up']
+        df.loc[df.index[i], 'up'] = curr_up if prev_close > prev_up else max(curr_up, prev_up)
+        # Down Trend
+        curr_dn = df.loc[df.index[i], 'dn']
+        prev_dn = df.loc[df.index[i-1], 'dn']
+        df.loc[df.index[i], 'dn'] = curr_dn if prev_close < prev_dn else min(curr_dn, prev_dn)
+        
+        prev_trend = df.loc[df.index[i-1], 'trend']
+        if prev_trend == -1 and df.loc[df.index[i], 'Close'] > df.loc[df.index[i-1], 'dn']:
+            df.loc[df.index[i], 'trend'] = 1
+        elif prev_trend == 1 and df.loc[df.index[i], 'Close'] < df.loc[df.index[i-1], 'up']:
+            df.loc[df.index[i], 'trend'] = -1
+        else:
+            df.loc[df.index[i], 'trend'] = prev_trend
+            
+        df.loc[df.index[i], 'st'] = df.loc[df.index[i], 'up'] if df.loc[df.index[i], 'trend'] == 1 else df.loc[df.index[i], 'dn']
 
-def analyze_trend(df, short_len, long_len):
-    # Hitung Kalman & Bulatkan ke Integer
-    df['Short_K'] = kalman_filter(df['Close'], short_len).round(0).astype(int)
-    df['Long_K'] = kalman_filter(df['Close'], long_len).round(0).astype(int)
-    df['Price'] = df['Close'].round(0).astype(int)
-    
-    # Logika Trend
-    df['Trend_Up'] = df['Short_K'] > df['Long_K']
-    
-    # Sinyal Buy/Sell (Hanya saat perpotongan)
-    df['Signal'] = ""
-    mask_buy = (df['Trend_Up']) & (~df['Trend_Up'].shift(1).fillna(False))
-    mask_sell = (~df['Trend_Up']) & (df['Trend_Up'].shift(1).fillna(False))
-    df.loc[mask_buy, 'Signal'] = "🟢 BUY"
-    df.loc[mask_sell, 'Signal'] = "🔴 SELL"
-    
-    # Status Visual
-    df['Mom_Up'] = df['Short_K'] > df['Short_K'].shift(2)
-    df['Status'] = "Neutral"
-    df.loc[(df['Trend_Up']) & (df['Mom_Up']), 'Status'] = "🟩 BULLISH"
-    df.loc[(~df['Trend_Up']) & (~df['Mom_Up']), 'Status'] = "🟥 BEARISH"
-    
+    df['buy_signal'] = (df['trend'] == 1) & (df['trend'].shift(1) == -1)
+    df['sell_signal'] = (df['trend'] == -1) & (df['trend'].shift(1) == 1)
     return df
 
-# --- INTERFACE STREAMLIT ---
-st.title("📈 Kalman Trend Analysis")
+# --- UI STREAMLIT ---
+st.set_page_config(layout="wide", page_title="Supertrend IDX Label Harga")
 
-# Sidebar
-st.sidebar.header("Pencarian & Parameter")
-ticker_raw = st.sidebar.text_input("Kode Saham (Contoh: BBRI)", value="BBCA").upper().strip()
+st.sidebar.header("Konfigurasi")
+ticker_input = st.sidebar.text_input("Kode Saham (Tanpa .JK)", value="MINA").upper()
+ticker_idx = f"{ticker_input}.JK"
 
-# Proteksi .JK
-if ticker_raw:
-    ticker_full = ticker_raw if ticker_raw.endswith(".JK") else f"{ticker_raw}.JK"
-else:
-    ticker_full = ""
+data_period = st.sidebar.selectbox("Rentang Waktu", options=['3mo', '6mo', '1y', '2y'], index=1)
+atr_p = st.sidebar.number_input("ATR Period", value=10)
+atr_m = st.sidebar.number_input("ATR Multiplier", value=1.0, step=0.1) # Di gambar kamu pakenya multiplier 1.0
 
-period = st.sidebar.selectbox("Periode Data", ["6mo", "1y", "2y"], index=1)
-s_len = st.sidebar.slider("Short Length", 10, 100, 50)
-l_len = st.sidebar.slider("Long Length", 50, 300, 150)
+try:
+    df_raw = yf.download(ticker_idx, period=data_period, interval='1d')
+    if isinstance(df_raw.columns, pd.MultiIndex):
+        df_raw.columns = df_raw.columns.get_level_values(0)
 
-if ticker_full:
-    try:
-        with st.spinner(f'Fetching {ticker_full}...'):
-            data = yf.download(ticker_full, period=period, progress=False, auto_adjust=True)
+    if not df_raw.empty:
+        df_result = calculate_supertrend(df_raw.copy(), atr_p, atr_m)
+
+        fig = go.Figure()
+
+        # Candlestick
+        fig.add_trace(go.Candlestick(
+            x=df_result.index, open=df_result['Open'], high=df_result['High'],
+            low=df_result['Low'], close=df_result['Close'], name=ticker_input
+        ))
+
+        # Supertrend Line
+        df_result['up_line'] = df_result['st'].where(df_result['trend'] == 1)
+        df_result['dn_line'] = df_result['st'].where(df_result['trend'] == -1)
+
+        fig.add_trace(go.Scatter(x=df_result.index, y=df_result['up_line'], line=dict(color='#00FF00', width=2), name="Up"))
+        fig.add_trace(go.Scatter(x=df_result.index, y=df_result['dn_line'], line=dict(color='#FF0000', width=2), name="Down"))
+
+        # --- LABEL HARGA BUY ---
+        buy_sig = df_result[df_result['buy_signal']]
+        for index, row in buy_sig.iterrows():
+            fig.add_annotation(
+                x=index, y=row['Low'],
+                text=f"{row['Close']:.0f}", # Menampilkan harga Close
+                showarrow=True, arrowhead=1, ax=0, ay=25,
+                bgcolor="#00FF00", font=dict(color="white", size=12),
+                bordercolor="green", borderpad=4
+            )
+
+        # --- LABEL HARGA SELL ---
+        sell_sig = df_result[df_result['sell_signal']]
+        for index, row in sell_sig.iterrows():
+            fig.add_annotation(
+                x=index, y=row['High'],
+                text=f"{row['Close']:.0f}", # Menampilkan harga Close
+                showarrow=True, arrowhead=1, ax=0, ay=-25,
+                bgcolor="#FF0000", font=dict(color="white", size=12),
+                bordercolor="red", borderpad=4
+            )
+
+        fig.update_layout(height=700, template='plotly_dark', xaxis_rangeslider_visible=False)
+        st.plotly_chart(fig, use_container_width=True)
         
-        if data is not None and not data.empty:
-            # Handle Multi-index
-            if isinstance(data.columns, pd.MultiIndex):
-                data.columns = data.columns.get_level_values(0)
-            
-            df_proc = data.copy()
-            result = analyze_trend(df_proc, s_len, l_len)
-            
-            # Tampilan Ringkasan
-            last_row = result.iloc[-1]
-            c1, c2, c3 = st.columns(3)
-            c1.metric("Ticker", ticker_full)
-            c2.metric("Last Price", f"{int(last_row['Price'])}")
-            c3.metric("Status", last_row['Status'])
-
-            # Tabel History
-            st.subheader(f"History Tabel: {ticker_raw}")
-            show_df = result[['Price', 'Short_K', 'Long_K', 'Signal', 'Status']].tail(30).copy()
-            show_df.index = show_df.index.date # Bersihkan jam agar hanya tanggal
-            show_df = show_df.iloc[::-1]
-
-            # FUNGSI STYLE TERBARU (Menggunakan .map bukan .applymap)
-            def style_rows(val):
-                if "BULLISH" in val: return 'color: #13bd6e; font-weight: bold'
-                if "BEARISH" in val: return 'color: #af0d4b; font-weight: bold'
-                return ''
-
-            # Perubahan penting: .style.map (untuk pandas terbaru)
-            st.table(show_df.style.map(style_rows, subset=['Status']))
-            
-        else:
-            st.error(f"Gagal menarik data {ticker_full}. Cek koneksi internet.")
-            
-    except Exception as e:
-        st.error(f"Terjadi Kesalahan: {e}")
+        st.success(f"Berhasil memuat {ticker_input}. Trend saat ini: {'BULLISH' if df_result['trend'].iloc[-1] == 1 else 'BEARISH'}")
+    else:
+        st.error("Data tidak ditemukan.")
+except Exception as e:
+    st.error(f"Error: {e}")
