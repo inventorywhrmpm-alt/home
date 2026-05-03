@@ -75,7 +75,7 @@ with col6:
     st.write("analisis harga saham Berdasarkan deteksi Divergnce.")
     st.page_link("pages/aidivergen.py", label="AI Divergnce", icon="📈")
 with col7:
-    st.warning("### 📈 KalmandTrend")
+    st.warning("### 📈 Kalmand")
     st.write("analisis harga saham Berdasarkan deteksi Klamandtrendlevel.")
     st.page_link("pages/kalmandtrendlevel.py", label="AI Kalmand", icon="📈")
 with col8:
