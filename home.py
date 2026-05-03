@@ -66,7 +66,7 @@ st.divider()
 col5, col6, col7, col8 = st.columns(4)
 
 with col5:
-    st.success("### 🚀 Predict MA")
+    st.info("### 🚀 Predict MA")
     st.write("analisis harga saham Berdasrkan MA 5, 20, 50 dan 100 + RSI.")
     st.page_link("pages/prediksibyma.py", label="MA Predict", icon="📈")
     
