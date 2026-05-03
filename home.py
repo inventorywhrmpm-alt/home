@@ -73,7 +73,7 @@ with col5:
 with col6:
     st.warning("### 📈 AI Divergence")
     st.write("analisis harga saham Berdasrkan Berdasrkan deteksi Divergnce.")
-    st.page_link("pages/prediksibyma.py", label="AI Divergnce", icon="📈")
+    st.page_link("pages/aidivergence.py", label="AI Divergnce", icon="📈")
 
 st.divider()
 # 5. Tambahkan Informasi Tambahan di Bawah
