@@ -5,87 +5,111 @@ import pandas_ta as ta
 import numpy as np
 
 # --- Konfigurasi Halaman ---
-st.set_page_config(page_title="BOSWaves Swing Forecast", layout="wide")
+st.set_page_config(page_title="IDX Divergence Screener", layout="wide")
 
-def get_swing_data(ticker, tf, swing_len):
-    # Download data
-    df = yf.download(ticker, period="1mo", interval=tf, progress=False)
-    if df.empty:
-        return None
+def detect_divergence(df, rsi_len=14, lookback=60):
+    """
+    Logika penyederhanaan dari skrip Trendoscope:
+    Mencari pivot pada harga dan oscillator untuk mendeteksi perbedaan arah.
+    """
+    if len(df) < lookback:
+        return "Data Kurang"
+
+    # Hitung RSI sebagai Oscillator Utama
+    df['rsi'] = ta.rsi(df['Close'], length=rsi_len)
     
-    # Menghitung Pivot Logic (mirip logic ta.highest/lowest swingLen)
-    df['H'] = df['High'].rolling(window=swing_len, center=False).max()
-    df['L'] = df['Low'].rolling(window=swing_len, center=False).min()
-    
-    # Deteksi Swing High/Low
-    # Logic: high[1] == H[1] and high < H (Pivot terkonfirmasi saat harga turun dari peak)
-    df['SH'] = (df['High'].shift(1) == df['H'].shift(1)) & (df['High'] < df['H'])
-    df['SL'] = (df['Low'].shift(1) == df['L'].shift(1)) & (df['Low'] > df['L'])
-    
-    # Ambil pivot terakhir untuk deteksi divergence/bias
-    last_sh = df[df['SH']]['High'].tail(2).values
-    last_sl = df[df['SL']]['Low'].tail(2).values
-    current_close = df['Close'].iloc[-1]
-    
-    # Logic Divergence / Structure
-    # Bullish: Lower Low pada harga tapi Higher Low pada struktur (atau Break of Structure)
-    # Di sini kita simpulkan status berdasarkan posisi harga terhadap pivot terakhir
-    status = "Neutral"
-    if len(last_sl) >= 2:
-        if current_close > last_sh[-1]:
-            status = "Bullish Break (BOS)"
-        elif last_sl[-1] > last_sl[-2] and current_close > last_sl[-1]:
-            status = "Bullish Structure"
-            
-    if len(last_sh) >= 2:
-        if current_close < last_sl[-1]:
-            status = "Bearish Break (BOS)"
-        elif last_sh[-1] < last_sh[-2] and current_close < last_sh[-1]:
-            status = "Bearish Structure"
-            
-    return {
-        "Ticker": ticker,
-        "TF": tf,
-        "Price": f"{current_close:.2f}",
-        "Status": status,
-        "Last Pivot H": f"{last_sh[-1]:.2f}" if len(last_sh) > 0 else "N/A",
-        "Last Pivot L": f"{last_sl[-1]:.2f}" if len(last_sl) > 0 else "N/A"
-    }
+    # Mencari Pivot (Lows & Highs)
+    # Pivot Low (untuk Bullish)
+    df['pl'] = df['Low'][(df['Low'] < df['Low'].shift(1)) & (df['Low'] < df['Low'].shift(-1))]
+    # Pivot High (untuk Bearish)
+    df['ph'] = df['High'][(df['High'] > df['High'].shift(1)) & (df['High'] > df['High'].shift(-1))]
+
+    # Ambil 2 pivot terakhir yang valid
+    pivots_l = df.dropna(subset=['pl']).tail(2)
+    pivots_h = df.dropna(subset=['ph']).tail(2)
+
+    status = "No Divergence"
+
+    # --- Bullish Divergence Logic ---
+    if len(pivots_l) == 2:
+        price_low1, price_low2 = pivots_l['Low'].iloc[0], pivots_l['Low'].iloc[1]
+        rsi_low1, rsi_low2 = pivots_l['rsi'].iloc[0], pivots_l['rsi'].iloc[1]
+
+        # Regular Bullish: Price LL, RSI HL
+        if price_low2 < price_low1 and rsi_low2 > rsi_low1:
+            status = "Bullish Divergence"
+        # Hidden Bullish: Price HL, RSI LL
+        elif price_low2 > price_low1 and rsi_low2 < rsi_low1:
+            status = "Bullish Hidden"
+
+    # --- Bearish Divergence Logic ---
+    if len(pivots_h) == 2 and status == "No Divergence":
+        price_high1, price_high2 = pivots_h['High'].iloc[0], pivots_h['High'].iloc[1]
+        rsi_high1, rsi_high2 = pivots_h['rsi'].iloc[0], pivots_h['rsi'].iloc[1]
+
+        # Regular Bearish: Price HH, RSI LH
+        if price_high2 > price_high1 and rsi_high2 < rsi_high1:
+            status = "Bearish Divergence"
+        # Hidden Bearish: Price LH, RSI HH
+        elif price_high2 < price_high1 and rsi_high2 > rsi_high1:
+            status = "Bearish Hidden"
+
+    return status
 
 # --- UI Streamlit ---
-st.title("🌊 Swing Structure Forecast Dashboard")
-st.markdown("Analisis otomatis berdasarkan logic **BOSWaves** (Swing Pivot Detection).")
+st.title("📈 IDX Divergence Screener")
+st.markdown("Mendeteksi **Regular** & **Hidden** Divergence pada saham-saham pilihan di Bursa Efek Indonesia (IDX).")
 
 with st.sidebar:
-    st.header("Settings")
-    tickers_input = st.text_input("Enter Tickers (pisahkan dengan koma)", "BTC-USD, ETH-USD, AAPL, TSLA, GC=F")
-    timeframe = st.selectbox("Timeframe", ["15m", "1h", "4h", "1d"], index=2)
-    swing_length = st.number_input("Swing Length", value=16, min_value=10)
-    run_button = st.button("Analyze Structure")
+    st.header("Pengaturan")
+    # Input ticker tanpa .JK, nanti ditambahkan otomatis
+    input_tickers = st.text_area("Masukkan Kode Saham (pisahkan koma)", 
+                                 "BBCA, BBRI, TLKM, ASII, GOTO, UNVR, ADRO")
+    
+    tf = st.selectbox("Timeframe", ["1d", "1h", "15m"], index=0)
+    rsi_length = st.slider("RSI Length", 5, 30, 14)
+    run_btn = st.button("Jalankan Pemindaian")
 
-if run_button:
-    ticker_list = [t.strip() for t in tickers_input.split(",")]
+if run_btn:
+    # Parsing ticker dan tambah .JK
+    ticker_list = [t.strip().upper() for t in input_tickers.split(",")]
+    ticker_jk = [f"{t}.JK" for t in ticker_list]
+    
     results = []
     
     progress_bar = st.progress(0)
-    for i, ticker in enumerate(ticker_list):
-        try:
-            data = get_swing_data(ticker, timeframe, swing_length)
-            if data:
-                results.append(data)
-        except Exception as e:
-            st.error(f"Error pada {ticker}: {e}")
-        progress_bar.progress((i + 1) / len(ticker_list))
     
+    for i, t in enumerate(ticker_jk):
+        try:
+            # Download data (ambil 6 bulan terakhir untuk mencari pivot)
+            df = yf.download(t, period="6mo", interval=tf, progress=False)
+            
+            if not df.empty:
+                status = detect_divergence(df, rsi_len=rsi_length)
+                last_price = df['Close'].iloc[-1]
+                
+                results.append({
+                    "Ticker": t.replace(".JK", ""),
+                    "Price": f"Rp {last_price:,.0f}",
+                    "Status": status,
+                    "Timeframe": tf
+                })
+        except Exception as e:
+            continue
+            
+        progress_bar.progress((i + 1) / len(ticker_jk))
+
+    # Tampilkan Hasil
     if results:
-        df_res = pd.DataFrame(results)
+        df_final = pd.DataFrame(results)
         
         # Styling Tabel
-        def highlight_status(val):
-            if "Bullish" in val: return 'background-color: #00ff0022; color: #00ff00'
-            if "Bearish" in val: return 'background-color: #ff000022; color: #ff0000'
-            return ''
+        def color_status(val):
+            if "Bullish" in val: color = '#00ff00; font-weight: bold' # Hijau
+            elif "Bearish" in val: color = '#ff4b4b; font-weight: bold' # Merah
+            else: color = 'white'
+            return f'color: {color}'
 
-        st.table(df_res.style.applymap(highlight_status, subset=['Status']))
+        st.table(df_final.style.applymap(color_status, subset=['Status']))
     else:
-        st.warning("Tidak ada data yang ditemukan.")
+        st.error("Tidak ada data yang berhasil diambil. Pastikan kode saham benar.")
