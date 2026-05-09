@@ -38,29 +38,26 @@ def compute_isotropic_trend(df, period, groups, threshold, sigma):
 
 st.set_page_config(page_title="ST-EP06 Dashboard", layout="centered")
 
-# CSS untuk meniru gaya gelap & border tipis ala TradingView
 st.markdown("""
 <style>
     .reportview-container { background: #0e1117; }
-    .stTable { 
-        background-color: transparent; 
-        border: 1px solid #333; 
-        border-radius: 5px;
-    }
     th { color: #888 !important; font-weight: normal !important; text-align: center !important; border: 0.1px solid #333 !important; }
     td { text-align: center !important; border: 0.1px solid #333 !important; font-family: monospace; }
     .blue-text { color: #44aaff; font-weight: bold; }
     .up-text { color: #26a69a; font-weight: bold; }
     .dn-text { color: #ef5350; font-weight: bold; }
     .rng-text { color: #888; }
-    .header-box { border: 1px solid #333; padding: 10px; border-bottom: none; background: #131722; }
+    .header-box { border: 1px solid #333; padding: 10px; border-bottom: none; background: #131722; margin-top: 20px; }
+    .footer-box { border: 1px solid #333; padding: 10px; border-top: none; background: #131722; font-size: 0.85rem; color: #bbb; }
 </style>
 """, unsafe_allow_html=True)
 
 # Sidebar
 with st.sidebar:
-    user_ticker = st.text_input("Ticker", value="BBCA").upper()
-    i_thresh = st.slider("Threshold (°)", 0.0, 2.0, 0.5)
+    st.header("⚙️ Konfigurasi")
+    user_ticker = st.text_input("Ticker IDX", value="BBCA").upper()
+    i_thresh = st.slider("Threshold Sudut (°)", 0.0, 2.0, 0.5)
+    st.info("Gunakan threshold lebih tinggi untuk memfilter noise pada market yang sideways.")
 
 # Load Data
 df = yf.download(f"{user_ticker}.JK", period="1y", interval="1d", progress=False)
@@ -74,10 +71,9 @@ if not df.empty:
         trend, _ = compute_isotropic_trend(df, s, 5, i_thresh, sigma)
         results.append(trend)
 
-    # --- RENDER TABLE SEPERTI GAMBAR ---
+    # --- DASHBOARD RENDERING ---
     last_price = df['Close'].iloc[-1]
     
-    # 1. Header Row
     st.markdown(f"""
     <div class="header-box">
         <span style="color:white; font-weight:bold;">ST-EP06 • #{user_ticker} • 1D</span>
@@ -85,8 +81,6 @@ if not df.empty:
     </div>
     """, unsafe_allow_html=True)
 
-    # 2. Main Table (Period & Trend)
-    # Membuat baris HTML manual untuk kontrol warna presisi
     def get_trend_class(t):
         if "UP" in t: return "up-text"
         if "DN" in t: return "dn-text"
@@ -106,24 +100,42 @@ if not df.empty:
     """
     st.markdown(table_html, unsafe_allow_html=True)
 
-    # 3. Agreement & Channel Info
+    # Agreement & Channel Logic
     up_count = sum(1 for r in results if "UP" in r)
     dn_count = sum(1 for r in results if "DN" in r)
     dominant = f"{up_count}/6 UP ▲" if up_count >= dn_count else f"{dn_count}/6 DN ▼"
     
-    # Logic Dummy untuk Floor/Ceiling (bisa diganti dengan Support/Resistance asli)
-    low_price = df['Low'].tail( scales[-1] ).min()
-    high_price = df['High'].tail( scales[-1] ).max()
-    pct_from_floor = ((last_price - low_price) / (high_price - low_price)) * 100
+    low_47 = df['Low'].tail(47).min()
+    high_47 = df['High'].tail(47).max()
+    pct_from_floor = ((last_price - low_47) / (high_47 - low_47)) * 100
 
     st.markdown(f"""
-    <div style="border: 1px solid #333; padding: 8px; border-top: none; background: #131722; font-size: 0.9rem; color: #bbb;">
-        agreement: {dominant} {high_price:,.0f} ▼ {low_price:,.0f}<br>
-        <div style="margin-top:5px; border-top: 0.1px solid #333; padding-top:5px;">
-        Inside channel - {pct_from_floor:.0f}% from floor - {100-pct_from_floor:.0f}% to ceiling
+    <div class="footer-box">
+        agreement: {dominant} | H: {high_47:,.0f} | L: {low_47:,.0f}<br>
+        <div style="margin-top:5px; border-top: 0.5px solid #333; padding-top:5px;">
+        Inside channel - <b>{pct_from_floor:.1f}%</b> from floor - <b>{100-pct_from_floor:.1f}%</b> to ceiling
         </div>
     </div>
     """, unsafe_allow_html=True)
 
+    # --- SEKSI PANDUAN & REKOMENDASI ---
+    st.write("---")
+    with st.expander("📖 Cara Baca & Rekomendasi Strategi"):
+        st.markdown(f"""
+        ### 1. Cara Membaca Skala
+        *   **Period Kecil (3-13):** Tren jangka pendek (Mikro). Cepat berubah, cocok untuk konfirmasi entri cepat.
+        *   **Period Menengah (26-29):** Tren utama untuk *Swing Trading*.
+        *   **Period Besar (47):** Struktur pasar jangka panjang. Jika ini **UP**, abaikan koreksi kecil.
+
+        ### 2. Rekomendasi Berdasarkan Konsensus
+        *   ✅ **Strong Bullish (5/6 - 6/6 UP):** Konfirmasi beli sangat kuat. Layak di-hold.
+        *   ⚠️ **Conflicting (Bercampur):** Market sedang galau. Sebaiknya *wait and see*.
+        *   ❌ **Bearish (Dominan DN):** Hindari emiten ini sampai skala kecil (3-7) mulai berbalik UP.
+
+        ### 3. Eksekusi Berdasarkan Channel
+        *   **Near Floor (<20%):** Area *High Reward, Low Risk*. Bagus untuk akumulasi beli.
+        *   **Near Ceiling (>80%):** Area jenuh beli. Hati-hati koreksi meskipun tren masih UP.
+        """)
+
 else:
-    st.error("Ticker tidak ditemukan.")
+    st.error("Data tidak ditemukan. Pastikan ticker benar.")
