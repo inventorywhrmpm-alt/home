@@ -2,20 +2,21 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import yfinance as yf
-from datetime import datetime, timedelta
+from datetime import datetime
 
-# --- LOGIKA INTI INDIKATOR (Logic Asli) ---
+# --- LOGIKA INTI INDIKATOR ---
 
 def yang_zhang_sigma(df, length=20):
     """Menghitung Realized Volatility Yang-Zhang (2000)"""
-    # Menghindari error jika data terlalu pendek
     if len(df) < length + 1:
         return pd.Series([1e-10] * len(df))
-        
+    
+    # Menghitung komponen log
     log_ho = np.log(df['High'] / df['Open'])
     log_lo = np.log(df['Low'] / df['Open'])
     log_co = np.log(df['Close'] / df['Open'])
     
+    # Menggunakan shift(1) untuk Open-to-Close semalam
     log_oc_sq = np.log(df['Open'] / df['Close'].shift(1))**2
     log_cc_sq = np.log(df['Close'] / df['Close'].shift(1))**2
     
@@ -29,12 +30,13 @@ def yang_zhang_sigma(df, length=20):
     return np.sqrt(sigma_sq).fillna(1e-10)
 
 def compute_isotropic_trend(df, period, groups, threshold, sigma):
-    """Logika utama Isotropic Trend Line"""
-    # 1. Block Construction
+    """Menghitung sudut tren dalam ruang Isotropik (Volatility-Adjusted)"""
     mid_log = np.log((df['High'] + df['Low']) / 2)
     current_sigma = sigma.iloc[-1]
     
-    # Ambil data blok terakhir
+    if np.isnan(current_sigma) or current_sigma == 0:
+        current_sigma = 1e-10
+
     blocks = []
     for i in range(groups):
         start = -(i + 1) * period
@@ -44,101 +46,104 @@ def compute_isotropic_trend(df, period, groups, threshold, sigma):
         block_val = mid_log.iloc[start:end].mean()
         blocks.insert(0, block_val)
     
-    # 2. ICS Angle Calculation
     slopes = np.diff(blocks)
+    # Normalisasi slope terhadap volatilitas (Isotropic Scaling)
     avg_slope = np.mean(slopes) / (current_sigma * np.sqrt(period))
     angle_deg = np.degrees(np.arctan(avg_slope))
     
-    # Klasifikasi Arah
     if abs(angle_deg) < threshold:
-        direction = "◈ RNG"
+        return "◈ RNG", angle_deg
     elif angle_deg > 0:
-        direction = "▲ UP"
+        return "▲ UP", angle_deg
     else:
-        direction = "▼ DN"
-        
-    return direction, round(angle_deg, 2)
+        return "▼ DN", angle_deg
 
 # --- TAMPILAN STREAMLIT ---
 
 st.set_page_config(page_title="Smart Trader EP06 - IDX", layout="wide")
 
-# Custom CSS untuk gaya "Glassmorphism" ringan
 st.markdown("""
     <style>
     .main { background-color: #0e1117; }
-    div[data-testid="stMetricValue"] { color: #26a69a; }
+    [data-testid="stMetricValue"] { font-size: 1.8rem; }
+    .trend-card {
+        padding: 20px;
+        border-radius: 10px;
+        text-align: center;
+        background-color: #1e2127;
+        border: 1px solid #333;
+    }
     </style>
     """, unsafe_allow_html=True)
 
-st.title("🛡️ Smart Trader EP06: Isotropic Trend Lines (IDX)")
+st.title("🛡️ Smart Trader: Isotropic Trend Analysis")
 
-# Sidebar Inputs
 with st.sidebar:
     st.header("🔍 Market & Params")
-    # Input Ticker Tanpa .JK
-    user_ticker = st.text_input("Ticker IDX (Contoh: BBCA, ASII, GOTO)", value="BBCA").upper()
+    user_ticker = st.text_input("Ticker IDX", value="BBCA").upper()
     full_ticker = f"{user_ticker}.JK"
     
     st.divider()
-    i_period = st.number_input("Trend Block Period", 5, 100, 26)
+    i_period = st.number_input("Core Block Period", 5, 100, 26)
     i_groups = st.number_input("Trend Block Groups", 2, 10, 5)
-    i_thresh = st.slider("Range Threshold (°)", 0.0, 45.0, 0.5)
-    i_sigma_len = st.number_input("Yang-Zhang Sigma Length", 5, 100, 20)
+    i_thresh = st.slider("Range Threshold (°)", 0.0, 5.0, 0.5, step=0.1)
+    i_sigma_len = st.number_input("Volatility Window", 5, 100, 20)
 
-# Fetch Data dari Yahoo Finance
 @st.cache_data(ttl=3600)
 def load_idx_data(symbol):
     try:
-        data = yf.download(symbol, period="1y", interval="1d")
+        data = yf.download(symbol, period="2y", interval="1d")
+        if data.columns.nlevels > 1: # Flatten MultiIndex columns
+            data.columns = data.columns.get_level_values(0)
         return data
-    except:
+    except Exception as e:
         return None
 
 df = load_idx_data(full_ticker)
 
 if df is not None and not df.empty:
-    # Eksekusi Logika
     sigma = yang_zhang_sigma(df, i_sigma_len)
-    scales_actual = [3, 7, 13, i_period, 29, 47]
-
-    results = []
-    for s in scales_actual:
-        dir_name, angle = compute_isotropic_trend(df, s, i_groups, i_thresh, sigma)
-        results.append({
-            "Scale": f"Period {s}",
-            "Trend": dir_name,
-            "Angle": f"{angle}°"
-        })
+    scales = [3, 7, 13, i_period, 47, 60] # Variasi Timeframe (Micro ke Macro)
 
     # Header Dashboard
-    col_a, col_b, col_c = st.columns([2, 1, 1])
-    with col_a:
-        st.subheader(f"📊 Dashboard: {user_ticker} (IDX)")
-    with col_b:
-        st.metric("Live Price", f"Rp {df['Close'].iloc[-1]:,.0f}")
-    with col_c:
-        st.metric("Volatility (σ)", f"{sigma.iloc[-1]:.5f}")
-
-    # Visualisasi Tabel (Horizontal ala Dashboard TradingView)
-    res_df = pd.DataFrame(results).set_index("Scale").T
+    col_price, col_vol = st.columns(2)
+    last_price = df['Close'].iloc[-1]
+    last_sigma = sigma.iloc[-1]
     
-    # Menampilkan Tabel
-    st.table(res_df)
+    col_price.metric(f"Price {user_ticker}", f"Rp {last_price:,.0f}")
+    col_vol.metric("Yang-Zhang Volatility", f"{last_sigma:.5f}")
 
-    # Narrative Analysis
-    trend_counts = pd.DataFrame(results)['Trend'].value_counts()
-    dominant_trend = trend_counts.idxmax()
-    consensus_score = trend_counts.max()
+    st.write("### 🧭 Isotropic Multi-Scale Analysis")
+    
+    # Layout Horizontal Status
+    cols = st.columns(len(scales))
+    results = []
+    
+    for i, s in enumerate(scales):
+        dir_name, angle = compute_isotropic_trend(df, s, i_groups, i_thresh, sigma)
+        results.append({"Trend": dir_name, "Angle": angle})
+        
+        # Color Logic
+        color = "#26a69a" if "UP" in dir_name else "#ef5350" if "DN" in dir_name else "#9e9e9e"
+        
+        with cols[i]:
+            st.markdown(f"""
+                <div class="trend-card">
+                    <p style='color: #888; margin-bottom: 5px;'>P-{s}</p>
+                    <h3 style='color: {color}; margin: 0;'>{dir_name}</h3>
+                    <p style='color: #555; font-size: 0.8rem;'>{angle:.2f}°</p>
+                </div>
+            """, unsafe_allow_html=True)
 
-    st.markdown(f"""
-    > **Narrative Summary:**  
-    > Instrumen **{user_ticker}** saat ini menunjukkan tren dominan **{dominant_trend}** dengan tingkat konsensus **{consensus_score}/6** skala. 
-    > Analisis menggunakan ruang Isotropik memastikan sudut tren tidak terdistorsi oleh lonjakan volatilitas harian.
-    """)
+    # Narrative Summary
+    trend_list = [r['Trend'] for r in results]
+    dominant_trend = max(set(trend_list), key=trend_list.count)
+    consensus = trend_list.count(dominant_trend)
+
+    st.info(f"**Analisis Kesimpulan:** Saham {user_ticker} sedang berada dalam fase **{dominant_trend}** dengan kekuatan konsensus **{consensus}/{len(scales)}** skala waktu. " + 
+            ("Akurasi tren tinggi karena didukung berbagai timeframe." if consensus > 4 else "Hati-hati, tren belum stabil di semua skala."))
 
 else:
-    st.error(f"Data untuk ticker {user_ticker} tidak ditemukan. Pastikan kode saham benar.")
+    st.error(f"Gagal memuat data {user_ticker}. Cek kembali kode saham di Yahoo Finance.")
 
-st.divider()
-st.caption("Data source: Yahoo Finance | Isotropic Analysis by Gemini")
+st.caption("Disclaimer: Analisis ini berbasis volatilitas statistik dan bukan saran investasi.")
