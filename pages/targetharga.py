@@ -1,124 +1,133 @@
 import streamlit as st
-import yfinance as yf
 import pandas as pd
-import plotly.graph_objects as go
-from datetime import datetime, timedelta
+import numpy as np
 
-# Konfigurasi Halaman
-st.set_page_config(page_title="Price Target Visualizer", layout="wide")
+# --- LOGIKA INTI INDIKATOR (Calculations) ---
 
-## --- LOGIC ASLI PINE SCRIPT --- ##
+def yang_zhang_sigma(df, length=20):
+    """Menghitung Realized Volatility Yang-Zhang (2000)"""
+    log_ho = np.log(df['high'] / df['open'])
+    log_lo = np.log(df['low'] / df['open'])
+    log_co = np.log(df['close'] / df['open'])
+    
+    log_oc_sq = np.log(df['open'] / df['close'].shift(1))**2
+    log_cc_sq = np.log(df['close'] / df['close'].shift(1))**2
+    
+    rs_var = log_ho * (log_ho - log_co) + log_lo * (log_lo - log_co)
+    
+    k = 0.34 / (1.34 + (length + 1) / (length - 1))
+    
+    sigma_sq = (log_oc_sq.rolling(length).mean() + 
+                k * log_cc_sq.rolling(length).mean() + 
+                (1 - k) * rs_var.rolling(length).mean())
+    
+    return np.sqrt(sigma_sq).fillna(1e-10)
 
-def calculate_percent_change(target, current_close):
-    if not current_close: return "0%"
-    change = ((target / current_close) - 1) * 100
-    sign = "+" if change >= 0 else ""
-    return f"{sign}{change:.2f}%"
+def compute_isotropic_trend(df, period, groups, threshold, sigma):
+    """Logika utama Isotropic Trend Line"""
+    # 1. Block Construction (Geometric Mean of Midpoints)
+    mid_log = np.log((df['high'] + df['low']) / 2)
+    
+    # Ambil bar terakhir berdasarkan anchor (simulasi bar [0])
+    current_sigma = sigma.iloc[-1]
+    
+    # 2. Direction Detection & Angle Calculation
+    # Mengambil midpoint dari blok-blok terakhir
+    blocks = []
+    for i in range(groups):
+        start = -(i + 1) * period
+        end = -i * period if i > 0 else None
+        block_val = mid_log.iloc[start:end].mean()
+        blocks.insert(0, block_val)
+    
+    # Hitung slope (dimensi normalized terhadap sigma)
+    slopes = np.diff(blocks)
+    avg_slope = np.mean(slopes) / (current_sigma * np.sqrt(period))
+    
+    # Isotropic Angle (ICS)
+    angle_deg = np.degrees(np.arctan(avg_slope))
+    
+    # Klasifikasi Arah
+    if abs(angle_deg) < threshold:
+        direction = "RNG"
+        color = "grey"
+    elif angle_deg > 0:
+        direction = "UP"
+        color = "green"
+    else:
+        direction = "DN"
+        color = "red"
+        
+    return direction, round(angle_deg, 2), color
 
-def get_color(price, compared_to, pos_color, neg_color):
-    # Mengembalikan warna berdasarkan apakah target di atas harga penutupan
-    return pos_color if price >= compared_to else neg_color
+# --- TAMPILAN STREAMLIT ---
 
-## --- UI STREAMLIT --- ##
+st.set_page_config(page_title="Smart Trader EP06 - Isotropic Dashboard", layout="wide")
 
-st.title("📊 Analyst Price Target Visualizer")
+st.title("🛡️ Smart Trader EP06: Isotropic Trend Lines")
+st.markdown("Multi-scale structural trend channel built on Isotropic Coordinate System (ICS).")
 
-# Input Sidebar (Mirip input.color di Pine Script)
+# Sidebar Inputs (Sesuai Pine Script)
 with st.sidebar:
     st.header("Settings")
-    ticker_input = st.text_input("Symbol", value="AAPL").upper()
-    pos_color = st.color_picker("Positive Color", "#089981")
-    neg_color = st.color_picker("Negative Color", "#f23645")
-    
-    # Konversi hex ke RGBA untuk transparansi (fill)
-    pos_fill = f"rgba(8, 153, 129, 0.2)"
-    neg_fill = f"rgba(242, 54, 69, 0.2)"
+    i_period = st.number_input("Trend Block Period", 5, 100, 26)
+    i_groups = st.number_input("Trend Block Groups", 2, 10, 5)
+    i_thresh = st.slider("Range Threshold (°)", 0.0, 45.0, 0.5)
+    i_sigma_len = st.number_input("Yang-Zhang Sigma Length", 5, 100, 20)
 
-# Fetch Data
-try:
-    ticker_data = yf.Ticker(ticker_input)
-    df = ticker_data.history(period="1y")
-    info = ticker_data.info
+# Dummy Data Generator (Ganti dengan data asli Anda)
+def get_data():
+    dates = pd.date_range(start="2024-01-01", periods=300, freq="D")
+    data = pd.DataFrame({
+        'open': np.random.uniform(100, 110, 300),
+        'high': np.random.uniform(110, 115, 300),
+        'low': np.random.uniform(95, 100, 300),
+        'close': np.random.uniform(100, 110, 300)
+    }, index=dates)
+    return data
 
-    if df.empty:
-        st.error("No data found for this symbol.")
-    else:
-        # Mengambil Analyst Targets (Mirip syminfo.target_price_*)
-        target_high = info.get('targetHighPrice')
-        target_low = info.get('targetLowPrice')
-        target_avg = info.get('targetMeanPrice')
-        current_close = df['Close'].iloc[-1]
-        
-        # Simulasi YearFromNow (12 bulan dari sekarang)
-        last_date = df.index[-1]
-        target_date = last_date + timedelta(days=365)
+df = get_data()
 
-        if target_high and target_low and target_avg:
-            # Membuat Plotly Chart
-            fig = go.Figure()
+# Eksekusi Logika
+sigma = yang_zhang_sigma(df, i_sigma_len)
+scales = [3, 7, 13, 19, 29, 47]
+# Skala 19 dipetakan ke input user i_period
+scales_actual = [3, 7, 13, i_period, 29, 47]
 
-            # 1. Plot Candlestick
-            fig.add_trace(go.Candlestick(
-                x=df.index,
-                open=df['Open'], high=df['High'],
-                low=df['Low'], close=df['Close'],
-                name="Price"
-            ))
+results = []
+for s in scales_actual:
+    dir_name, angle, _ = compute_isotropic_trend(df, s, i_groups, i_thresh, sigma)
+    results.append({"Scale Period": s, "Trend": dir_name, "ICS Angle": f"{angle}°"})
 
-            # 2. Logic Menggambar Target (Mirip drawTarget & linefill)
-            targets = [
-                ("Max", target_high),
-                ("Avg", target_avg),
-                ("Min", target_low)
-            ]
+# --- VISUALISASI TABEL DASHBOARD ---
 
-            for label_text, price in targets:
-                p_change = calculate_percent_change(price, current_close)
-                line_color = get_color(price, current_close, pos_color, neg_color)
-                fill_color = get_color(price, current_close, pos_fill, neg_fill)
+st.subheader("📊 Multi-Scale Analysis Dashboard")
 
-                # Garis Proyeksi (Dotted Line)
-                fig.add_trace(go.Scatter(
-                    x=[last_date, target_date],
-                    y=[current_close, price],
-                    mode='lines+text',
-                    name=f"Target {label_text}",
-                    line=dict(color=line_color, width=2, dash='dot'),
-                    text=["", f"{label_text} {p_change}"],
-                    textposition="top right"
-                ))
+# Mengubah list hasil menjadi DataFrame untuk tabel
+res_df = pd.DataFrame(results).T
+res_df.columns = [f"Scale {i+1}" for i in range(len(scales_actual))]
 
-                # Area Fill (Simulasi linefill Pine Script)
-                fig.add_trace(go.Scatter(
-                    x=[last_date, target_date, target_date, last_date],
-                    y=[current_close, price, current_close, current_close],
-                    fill='toself',
-                    fillcolor=fill_color,
-                    line=dict(color='rgba(255,255,255,0)'),
-                    hoverinfo='skip',
-                    showlegend=False
-                ))
+# Menampilkan tabel dengan gaya highlight
+def style_trend(val):
+    if val == "UP": return 'background-color: #26a69a; color: white'
+    if val == "DN": return 'background-color: #ef5350; color: white'
+    if val == "RNG": return 'background-color: #888888; color: white'
+    return ''
 
-            # Update Layout agar terlihat seperti TradingView
-            fig.update_layout(
-                height=700,
-                xaxis_rangeslider_visible=False,
-                template="plotly_dark",
-                yaxis_title="Price",
-                margin=dict(l=10, r=10, t=10, b=10)
-            )
+st.table(res_df)
 
-            st.plotly_chart(fig, use_container_width=True)
+# Consensus & Narrative (Step 5 & 6)
+trend_counts = pd.DataFrame(results)['Trend'].value_counts()
+primary_trend = results[3]['Trend'] # Skala i_period
 
-            # Info Box (Mirip tooltip label.new)
-            num_analysts = info.get('numberOfAnalystOpinions', 'N/A')
-            st.info(f"**Analyst Insights:** The {num_analysts} analysts offering 1 year price forecasts for {ticker_input} "
-                    f"have a max estimate of {target_high} and a min estimate of {target_low}.")
+st.info(f"**Consensus:** {trend_counts.max()} out of 6 scales agree on **{trend_counts.idxmax()}**")
 
-        else:
-            # Warning jika data analis tidak ada (Mirip barstate.islast logic)
-            st.warning("No analyst predictions found for this symbol.")
-            st.info("If there are any new predictions, they should appear once the market data providers update.")
+# Simulasi Narrative Row
+col1, col2 = st.columns(2)
+with col1:
+    st.metric("Primary Trend (Period %d)" % i_period, primary_trend)
+with col2:
+    st.metric("Current Volatility (σ)", f"{sigma.iloc[-1]:.6f}")
 
-except Exception as e:
-    st.error(f"Error fetching data: {e}")
+st.divider()
+st.caption("Note: This dashboard uses Yang-Zhang volatility to normalize price movement into a dimensionless space (Isotropic).")
