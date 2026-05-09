@@ -12,11 +12,10 @@ def get_divergence_status(df, rsi_len=14):
     if df is None or df.empty:
         return "Data Kosong"
 
-    # Fix Multi-Index yfinance
-    if isinstance(df.columns, pd.MultiIndex):
-        df.columns = df.columns.get_level_values(0)
-    
+    # Standarisasi nama kolom ke lowercase
     df.columns = [str(col).lower() for col in df.columns]
+    
+    # Hapus kolom NaN yang mengganggu
     df = df.dropna(subset=['close', 'high', 'low'])
 
     if len(df) < rsi_len + 10:
@@ -58,10 +57,7 @@ st.title("🌊 IDX Divergence Screener")
 with st.sidebar:
     st.header("⚙️ Settings")
     raw_tickers = st.text_area("List Kode Saham (Tanpa .JK)", value="BBCA, BBRI, SCMA, GOTO, TLKM", height=150)
-    
-    # Menambahkan pilihan 4h
     tf_choice = st.selectbox("Timeframe", ["1d", "4h", "1h", "15m"], index=0)
-    
     scan_button = st.button("🚀 Start Scan", use_container_width=True)
 
 # --- 4. DATA PROCESSING ---
@@ -73,30 +69,40 @@ if scan_button:
     for i, sym in enumerate(ticker_list):
         t_jk = f"{sym}.JK"
         try:
-            # Logic khusus untuk 4h
-            if tf_choice == "4h":
-                # Ambil data 1h lalu resample ke 4h
-                df_raw = yf.download(t_jk, period="2y", interval="1h", progress=False)
-                if not df_raw.empty:
-                    # Resampling logic
-                    logic = {'Open': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last', 'Volume': 'sum'}
-                    df_raw = df_raw.resample('4h').apply(logic).dropna()
-            else:
-                df_raw = yf.download(t_jk, period="2y", interval=tf_choice, progress=False)
+            # Pengaturan Periode (Intraday 1h/15m terbatas 730 hari)
+            data_period = "2y" if tf_choice in ["1d", "4h"] else "60d"
+            
+            # Download Data
+            fetch_tf = "1h" if tf_choice == "4h" else tf_choice
+            df_raw = yf.download(t_jk, period=data_period, interval=fetch_tf, progress=False)
             
             if df_raw.empty:
-                sig, price = "Data Kosong", "-"
-            else:
-                sig = get_divergence_status(df_raw)
-                # Ambil harga terakhir dengan aman
-                price = f"{df_raw['Close'].iloc[-1]:,.0f}" if 'Close' in df_raw.columns else "-"
+                final_results.append({"Ticker": sym, "Price": "-", "Signal Status": "Data Kosong", "Timeframe": tf_choice})
+                continue
+
+            # Perbaikan Multi-Index yfinance
+            if isinstance(df_raw.columns, pd.MultiIndex):
+                df_raw.columns = df_raw.columns.get_level_values(0)
+
+            # Logic Resampling 4h
+            if tf_choice == "4h":
+                logic = {'Open': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last', 'Volume': 'sum'}
+                df_raw = df_raw.resample('4h').apply(logic).dropna()
+
+            # Deteksi Divergensi
+            sig = get_divergence_status(df_raw)
+            
+            # Ambil harga terakhir dengan aman (tanpa case sensitive)
+            price_val = df_raw['Close'].iloc[-1] if 'Close' in df_raw.columns else df_raw['close'].iloc[-1]
+            price_str = f"{price_val:,.0f}"
 
             final_results.append({
                 "Ticker": sym,
-                "Price": price,
+                "Price": price_str,
                 "Signal Status": sig,
                 "Timeframe": tf_choice
             })
+            
         except Exception as e:
             final_results.append({"Ticker": sym, "Price": "Error", "Signal Status": f"Gagal: {str(e)}", "Timeframe": tf_choice})
         
