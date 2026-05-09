@@ -5,71 +5,78 @@ import pandas_ta as ta
 import numpy as np
 
 # --- 1. CONFIGURATION ---
-st.set_page_config(page_title="IDX Divergence Screener", layout="wide")
+st.set_page_config(page_title="IDX Divergence Screener V2", layout="wide")
 
 # --- 2. CORE LOGIC (DIVERGENCE ENGINE) ---
 def get_divergence_status(df, rsi_len=14):
-    """
-    Logika mendeteksi 4 jenis divergensi:
-    - Regular Bullish: Price Lower Low, RSI Higher Low (Reversal)
-    - Hidden Bullish: Price Higher Low, RSI Lower Low (Continuation)
-    - Regular Bearish: Price Higher High, RSI Lower High (Reversal)
-    - Hidden Bearish: Price Lower High, RSI Higher High (Continuation)
-    """
-    # Hitung RSI menggunakan pandas_ta
-    df['rsi'] = ta.rsi(df['Close'], length=rsi_len)
+    # Salin dataframe untuk menghindari SettingWithCopyWarning
+    df = df.copy()
     
-    # Hapus bar awal yang RSI-nya masih NaN
-    df = df.dropna(subset=['rsi']).copy()
-    
-    if len(df) < 20:
+    # Pastikan nama kolom lowercase untuk konsistensi dengan pandas_ta
+    df.columns = [str(col).lower() for col in df.columns]
+
+    # CLEANING: Hapus bar yang tidak lengkap
+    df = df.dropna(subset=['close', 'high', 'low'])
+
+    # VALIDASI: Butuh minimal rsi_len + beberapa bar untuk pivot
+    if len(df) < rsi_len + 10:
         return "Data Kurang"
 
-    # Deteksi Pivot menggunakan rolling window (Radius 3 bar)
-    # Pivot Low
-    df['is_pl'] = (df['Low'] < df['Low'].shift(1)) & (df['Low'] < df['Low'].shift(2)) & \
-                  (df['Low'] < df['Low'].shift(-1)) & (df['Low'] < df['Low'].shift(-2))
-    # Pivot High
-    df['is_ph'] = (df['High'] > df['High'].shift(1)) & (df['High'] > df['High'].shift(2)) & \
-                  (df['High'] > df['High'].shift(-1)) & (df['High'] > df['High'].shift(-2))
+    # HITUNG RSI: Gunakan try-except spesifik untuk perhitungan
+    try:
+        df['rsi'] = ta.rsi(df['close'], length=rsi_len)
+        # Hapus bar awal yang RSI-nya NaN
+        df = df.dropna(subset=['rsi'])
+    except Exception:
+        return "Gagal Hitung RSI"
+
+    if len(df) < 5:
+        return "Data Kurang"
+
+    # DETEKSI PIVOT: (Radius 2 bar)
+    # Pivot Low (Support)
+    df['is_pl'] = (df['low'] < df['low'].shift(1)) & (df['low'] < df['low'].shift(2)) & \
+                  (df['low'] < df['low'].shift(-1)) & (df['low'] < df['low'].shift(-2))
+    # Pivot High (Resistance)
+    df['is_ph'] = (df['high'] > df['high'].shift(1)) & (df['high'] > df['high'].shift(2)) & \
+                  (df['high'] > df['high'].shift(-1)) & (df['high'] > df['high'].shift(-2))
 
     pivots_l = df[df['is_pl']].tail(2)
     pivots_h = df[df['is_ph']].tail(2)
 
     status = "No Divergence"
 
-    # Bullish Check (Berdasarkan Pivot Low)
+    # Bullish Check
     if len(pivots_l) == 2:
-        p1_price, p2_price = pivots_l['Low'].iloc[0], pivots_l['Low'].iloc[1]
+        p1_price, p2_price = pivots_l['low'].iloc[0], pivots_l['low'].iloc[1]
         p1_rsi, p2_rsi = pivots_l['rsi'].iloc[0], pivots_l['rsi'].iloc[1]
 
         if p2_price < p1_price and p2_rsi > p1_rsi:
-            status = "🟢 Bullish Divergence"
+            status = "🟢 Bullish Div"
         elif p2_price > p1_price and p2_rsi < p1_rsi:
-            status = "🟢 Bullish Hidden"
+            status = "🟢 Bullish Hid"
 
-    # Bearish Check (Berdasarkan Pivot High)
+    # Bearish Check
     if len(pivots_h) == 2 and status == "No Divergence":
-        p1_price, p2_price = pivots_h['High'].iloc[0], pivots_h['High'].iloc[1]
+        p1_price, p2_price = pivots_h['high'].iloc[0], pivots_h['high'].iloc[1]
         p1_rsi, p2_rsi = pivots_h['rsi'].iloc[0], pivots_h['rsi'].iloc[1]
 
         if p2_price > p1_price and p2_rsi < p1_rsi:
-            status = "🔴 Bearish Divergence"
+            status = "🔴 Bearish Div"
         elif p2_price < p1_price and p2_rsi > p1_rsi:
-            status = "🔴 Bearish Hidden"
+            status = "🔴 Bearish Hid"
 
     return status
 
 # --- 3. UI LAYOUT ---
 st.title("🌊 IDX Divergence Screener")
-st.caption("Berdasarkan Logika Trendoscope & BOSWaves untuk Bursa Efek Indonesia")
+st.caption("Fix Error: ['rsi'] - Versi Lebih Stabil")
 
 with st.sidebar:
     st.header("⚙️ Settings")
-    # Contoh input: BBCA, ASII, TLKM, UNVR
-    raw_tickers = st.text_area("List Kode Saham IDX (Tanpa .JK)", 
-                               value="BBCA, BBRI, TLKM, ASII, GOTO, ADRO, AMRT, UNVR",
-                               help="Pisahkan dengan koma. Contoh: BBCA, ASII")
+    raw_tickers = st.text_area("List Kode Saham (Tanpa .JK)", 
+                               value="BBCA, BBRI, TLKM, ASII, SCMA, GOTO, ADRO",
+                               height=150)
     
     timeframe = st.selectbox("Timeframe", ["1d", "1h", "15m"], index=0)
     rsi_val = st.slider("RSI Period", 5, 30, 14)
@@ -80,50 +87,43 @@ if scan_button:
     ticker_list = [t.strip().upper() for t in raw_tickers.split(",") if t.strip()]
     final_data = []
 
-    progress_text = "Sedang mengambil data dari Yahoo Finance..."
-    my_bar = st.progress(0, text=progress_text)
+    my_bar = st.progress(0, text="Menghubungkan ke Yahoo Finance...")
 
     for i, sym in enumerate(ticker_list):
         ticker_jk = f"{sym}.JK"
         try:
-            # Mengambil data 1 tahun agar pivot lebih akurat
-            df_stock = yf.download(ticker_jk, period="1y", interval=timeframe, progress=False)
+            # Ambil data sedikit lebih banyak (2 tahun) untuk menjamin histori cukup
+            df_stock = yf.download(ticker_jk, period="2y", interval=timeframe, progress=False)
             
-            if df_stock.empty:
-                st.error(f"Data {sym} kosong atau tidak ditemukan.")
+            if df_stock is None or df_stock.empty:
+                final_data.append({"Ticker": sym, "Price": "-", "Signal Status": "Data Tidak Ditemukan", "Timeframe": timeframe})
                 continue
 
-            # Hitung Status
             res_status = get_divergence_status(df_stock, rsi_len=rsi_val)
             last_close = df_stock['Close'].iloc[-1]
 
             final_data.append({
                 "Ticker": sym,
-                "Last Price": f"Rp {last_close:,.0f}",
+                "Price": f"{last_close:,.0f}",
                 "Signal Status": res_status,
                 "Timeframe": timeframe
             })
         except Exception as e:
-            st.warning(f"Gagal memproses {sym}: {e}")
+            final_data.append({"Ticker": sym, "Price": "Error", "Signal Status": f"Gagal: {str(e)}", "Timeframe": timeframe})
         
-        # Update Progress
-        my_bar.progress((i + 1) / len(ticker_list), text=f"Scanning: {sym}")
+        my_bar.progress((i + 1) / len(ticker_list), text=f"Memproses: {sym}")
 
-    # --- 5. DISPLAY RESULTS ---
+    # --- 5. DISPLAY ---
     if final_data:
         df_display = pd.DataFrame(final_data)
         
-        # Fungsi warna untuk tabel
         def color_signal(val):
-            if "🟢" in val: return 'background-color: #002b00; color: #00ff00'
-            if "🔴" in val: return 'background-color: #2b0000; color: #ff4b4b'
+            if "🟢" in str(val): return 'background-color: #002b00; color: #00ff00'
+            if "🔴" in str(val): return 'background-color: #2b0000; color: #ff4b4b'
+            if "Gagal" in str(val): return 'color: #888888'
             return ''
 
         st.subheader("📊 Hasil Pemindaian")
         st.table(df_display.style.applymap(color_signal, subset=['Signal Status']))
-        st.success(f"Berhasil memindai {len(final_data)} saham.")
     else:
-        st.info("Klik tombol scan untuk memulai.")
-
-else:
-    st.info("💡 **Tips:** Masukkan kode saham seperti 'BBCA, TLKM' lalu klik Start Scan.")
+        st.warning("Tidak ada ticker yang valid.")
