@@ -117,13 +117,28 @@ if scan_button:
     if final_data:
         df_display = pd.DataFrame(final_data)
         
+        # Fungsi warna untuk tabel
         def color_signal(val):
-            if "🟢" in str(val): return 'background-color: #002b00; color: #00ff00'
-            if "🔴" in str(val): return 'background-color: #2b0000; color: #ff4b4b'
-            if "Gagal" in str(val): return 'color: #888888'
+            # Pastikan val diubah ke string untuk pengecekan safety
+            str_val = str(val)
+            if "🟢" in str_val: 
+                return 'background-color: #002b00; color: #00ff00'
+            if "🔴" in str_val: 
+                return 'background-color: #2b0000; color: #ff4b4b'
+            if "Gagal" in str_val or "Data Kurang" in str_val: 
+                return 'color: #888888'
             return ''
 
         st.subheader("📊 Hasil Pemindaian")
-        st.table(df_display.style.applymap(color_signal, subset=['Signal Status']))
+        
+        # PERBAIKAN DI SINI:
+        # Gunakan .map() jika pandas >= 2.1.0, atau tetap gunakan .applymap() jika versi lama.
+        # Untuk Streamlit Cloud, biasanya menggunakan versi terbaru, jadi gunakan .map()
+        try:
+            styled_df = df_display.style.map(color_signal, subset=['Signal Status'])
+        except AttributeError:
+            styled_df = df_display.style.applymap(color_signal, subset=['Signal Status'])
+            
+        st.table(styled_df)
     else:
         st.warning("Tidak ada ticker yang valid.")
