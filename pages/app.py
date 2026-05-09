@@ -1,108 +1,127 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+import yfinance as yf
 
-def calculate_vwap(df, prd=50, baseAPT=20.0, useAdapt=False, volBias=10.0):
-    # 1. Identifikasi Swing High/Low (Pivots)
-    df['ph'] = df['high'].rolling(window=prd*2+1, center=True).max()
-    df['pl'] = df['low'].rolling(window=prd*2+1, center=True).min()
+# --- Fungsi Kalkulasi Inti ---
+def calculate_vwap_logic(df, prd, baseAPT, useAdapt, volBias):
+    # 1. Hitung Pivot
+    df['high_max'] = df['high'].rolling(window=prd, center=True).max()
+    df['low_min'] = df['low'].rolling(window=prd, center=True).min()
     
-    # 2. Adaptation (ATR Ratio)
+    df['is_ph'] = df['high'] == df['high_max']
+    df['is_pl'] = df['low'] == df['low_min']
+    
+    # 2. Adaptation & ATR
     atr_len = 50
-    high_low = df['high'] - df['low']
-    high_close = np.abs(df['high'] - df['close'].shift())
-    low_close = np.abs(df['low'] - df['close'].shift())
-    ranges = pd.concat([high_low, high_close, low_close], axis=1)
-    true_range = ranges.max(axis=1)
-    df['atr'] = true_range.ewm(span=atr_len, adjust=False).mean() # rma di pine ≈ ewm
+    tr = pd.concat([
+        df['high'] - df['low'],
+        (df['high'] - df['close'].shift()).abs(),
+        (df['low'] - df['close'].shift()).abs()
+    ], axis=1).max(axis=1)
+    df['atr'] = tr.ewm(span=atr_len, adjust=False).mean()
     df['atrAvg'] = df['atr'].ewm(span=atr_len, adjust=False).mean()
     
     df['ratio'] = np.where(df['atrAvg'] > 0, df['atr'] / df['atrAvg'], 1.0)
-    
-    if useAdapt:
-        apt_raw = baseAPT / (df['ratio'] ** volBias)
-    else:
-        apt_raw = pd.Series(baseAPT, index=df.index)
-        
+    apt_raw = baseAPT / (df['ratio'] ** volBias) if useAdapt else pd.Series(baseAPT, index=df.index)
     df['apt_clamped'] = apt_raw.clip(5.0, 300.0).round()
-    
-    # Fungsi Alpha dari Pine Script
-    def get_alpha(apt):
-        decay = np.exp(-np.log(2.0) / np.maximum(1.0, apt))
-        return 1.0 - decay
 
-    # 3. Main Logic (Looping untuk meniru stateful behavior Pine Script)
-    # Karena indikator ini 'anchored' dan 'dynamic', kita harus melakukan iterasi
-    vwap_values = []
-    p = 0.0
-    vol_acc = 0.0
-    current_dir = 0
-    last_anchor_idx = 0
+    # 3. Labeling HH, HL, LL, LH
+    df['Structure'] = ""
+    last_ph = np.nan
+    last_pl = np.nan
     
-    # Identifikasi titik pivot (sederhana) untuk menentukan arah (dir)
-    df['is_high'] = (df['high'] == df['high'].rolling(prd).max())
-    df['is_low'] = (df['low'] == df['low'].rolling(prd).min())
+    vwap_values = []
+    p_acc, v_acc = 0.0, 0.0
+    current_dir = 0 # 1 untuk Up, -1 untuk Down
 
     for i in range(len(df)):
         hlc3 = (df['high'].iloc[i] + df['low'].iloc[i] + df['close'].iloc[i]) / 3
         vol = df['volume'].iloc[i]
         
-        # Deteksi perubahan arah (Swing)
-        new_dir = current_dir
-        if df['is_high'].iloc[i]:
-            new_dir = -1
-        elif df['is_low'].iloc[i]:
-            new_dir = 1
+        # Logika Swing & Label
+        if df['is_ph'].iloc[i]:
+            val = df['high'].iloc[i]
+            label = "HH" if val > last_ph else "LH"
+            df.at[df.index[i], 'Structure'] = label
+            last_ph = val
+            current_dir = -1 # Anchor baru (Down)
+            p_acc, v_acc = hlc3 * vol, vol # Reset Anchor
             
-        # Jika arah berubah (Anchor point baru)
-        if new_dir != current_dir:
-            current_dir = new_dir
-            p = hlc3 * vol
-            vol_acc = vol
+        elif df['is_pl'].iloc[i]:
+            val = df['low'].iloc[i]
+            label = "LL" if val < last_pl else "HL"
+            df.at[df.index[i], 'Structure'] = label
+            last_pl = val
+            current_dir = 1 # Anchor baru (Up)
+            p_acc, v_acc = hlc3 * vol, vol # Reset Anchor
         else:
-            # Perhitungan Dynamic (Adaptive EWMA)
-            alpha = get_alpha(df['apt_clamped'].iloc[i])
-            p = (1.0 - alpha) * p + alpha * (hlc3 * vol)
-            vol_acc = (1.0 - alpha) * vol_acc + alpha * vol
+            # Update VWAP Dynamic (Running)
+            apt = df['apt_clamped'].iloc[i]
+            alpha = 1.0 - np.exp(-np.log(2.0) / max(1.0, apt))
+            p_acc = (1.0 - alpha) * p_acc + alpha * (hlc3 * vol)
+            v_acc = (1.0 - alpha) * v_acc + alpha * vol
             
-        vwap_val = p / vol_acc if vol_acc > 0 else np.nan
-        vwap_values.append(vwap_val)
+        vwap_values.append(p_acc / v_acc if v_acc > 0 else np.nan)
 
     df['Dynamic_VWAP'] = vwap_values
-    df['Trend'] = np.where(df['is_high'], 'Downtrend (R)', np.where(df['is_low'], 'Uptrend (S)', 'Neutral'))
-    
     return df
 
-# --- UI Streamlit ---
-st.set_page_config(page_title="Dynamic Swing VWAP Converter", layout="wide")
-st.title("📊 Dynamic Swing Anchored VWAP (Python Version)")
+# --- Streamlit UI ---
+st.set_page_config(page_title="Zeiierman VWAP Multi-Ticker", layout="wide")
 
-st.sidebar.header("Konfigurasi Parameter")
-prd = st.sidebar.number_input("Swing Period", value=50, min_value=2)
-baseAPT = st.sidebar.number_input("Adaptive Price Tracking", value=20.0, min_value=1.0)
-useAdapt = st.sidebar.checkbox("Adapt APT by ATR ratio", value=False)
-volBias = st.sidebar.slider("Volatility Bias", 0.1, 20.0, 10.0)
+st.title("📈 Dynamic Swing VWAP & Market Structure")
+st.markdown("Menghitung VWAP Adaptif dan mendeteksi level **HH, HL, LL, LH** secara otomatis.")
 
-# Dummy Data - Di dunia nyata, Anda akan mengupload CSV atau fetch dari API
-st.subheader("Input Data (Contoh)")
-data = {
-    'high': [150, 152, 153, 151, 149, 148, 147, 150, 155, 158],
-    'low': [148, 149, 150, 148, 146, 145, 144, 146, 152, 154],
-    'close': [149, 151, 152, 149, 147, 146, 145, 149, 154, 157],
-    'volume': [1000, 1200, 1100, 1300, 900, 800, 1500, 2000, 2500, 2200]
-}
-df_input = pd.DataFrame(data)
-
-if st.button("Hitung VWAP"):
-    result_df = calculate_vwap(df_input.copy(), prd, baseAPT, useAdapt, volBias)
+# Sidebar Inputs
+with st.sidebar:
+    st.header("Pengaturan Parameter")
+    ticker_input = st.text_input("Masukkan Ticker (Pisahkan dengan koma)", value="BBCA, ASII, TLKM")
+    period = st.selectbox("Timeframe", ["1d", "1h", "15m"], index=0)
     
-    st.subheader("Hasil Kalkulasi Tabel")
-    # Menampilkan tabel dengan highlight trend
-    st.dataframe(result_df[['high', 'low', 'close', 'volume', 'Dynamic_VWAP', 'Trend']].style.highlight_max(axis=0))
+    st.divider()
+    prd = st.number_input("Swing Period", value=20, min_value=2)
+    baseAPT = st.number_input("Adaptive APT", value=20.0)
+    useAdapt = st.checkbox("Gunakan Adaptasi Volatilitas", value=True)
+    volBias = st.slider("Volatility Bias", 0.1, 15.0, 10.0)
+
+# Main Logic
+if ticker_input:
+    tickers = [t.strip().upper() for t in ticker_input.split(",")]
     
-    st.download_button(
-        label="Download Tabel sebagai CSV",
-        data=result_df.to_csv().encode('utf-8'),
-        file_name='vwap_result.csv',
-        mime='text/csv',
-    )
+    for ticker in tickers:
+        # Bersihkan .JK untuk pencarian dan tampilan
+        clean_ticker = ticker.replace(".JK", "")
+        search_ticker = f"{clean_ticker}.JK"
+        
+        with st.expander(label=f"Hasil Tabel: {clean_ticker}", expanded=True):
+            try:
+                # Fetch Data
+                df = yf.download(search_ticker, period="60d", interval=period, progress=False)
+                
+                if df.empty:
+                    st.error(f"Data untuk {clean_ticker} tidak ditemukan.")
+                    continue
+
+                # Flatten columns if multi-index (yfinance fix)
+                if isinstance(df.columns, pd.MultiIndex):
+                    df.columns = df.columns.get_level_values(0)
+
+                # Jalankan Kalkulasi
+                result = calculate_vwap_logic(df, prd, baseAPT, useAdapt, volBias)
+                
+                # Filter hanya baris yang punya pergerakan signifikan atau 20 bar terakhir
+                display_df = result[['high', 'low', 'close', 'volume', 'Dynamic_VWAP', 'Structure']].tail(20)
+                
+                # Tampilkan Tabel
+                st.table(display_df.style.format({
+                    'high': '{:.2f}', 'low': '{:.2f}', 'close': '{:.2f}', 
+                    'Dynamic_VWAP': '{:.2f}', 'volume': '{:,.0f}'
+                }).applymap(lambda x: 'background-color: #2ecc71; color: white' if x in ['HH', 'HL'] 
+                            else ('background-color: #e74c3c; color: white' if x in ['LL', 'LH'] else ''), subset=['Structure']))
+
+            except Exception as e:
+                st.error(f"Gagal memproses {clean_ticker}: {e}")
+
+else:
+    st.info("Silakan masukkan ticker saham di sidebar (contoh: BBCA, TLKM).")
