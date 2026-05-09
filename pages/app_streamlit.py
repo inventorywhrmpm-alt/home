@@ -4,61 +4,60 @@ import pandas as pd
 import pandas_ta as ta
 import numpy as np
 from sklearn.ensemble import RandomForestRegressor
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import r2_score
 from datetime import date, timedelta
 
-st.set_page_config(page_title="Price Action Predictor", layout="wide")
+st.set_page_config(page_title="Price Action Predictor v2", layout="wide")
 
-st.title("🎯 Live Price Action Predictor")
-st.markdown("Model ini melatih diri secara otomatis menggunakan data terbaru untuk memprediksi harga besok.")
+st.title("🎯 AI Price Action Predictor Pro")
+st.markdown("Model ini menggunakan **Validation Split** untuk menghindari prediksi palsu.")
 
 # --- SIDEBAR ---
 with st.sidebar:
     st.header("Konfigurasi")
-    ticker_input = st.text_input("Kode Saham (Tanpa .JK)", value="BBCA").upper().strip()
+    ticker_input = st.text_input("Kode Saham (Tanpa .JK)", value="BBca").upper().strip()
     ticker = f"{ticker_input}.JK"
     
-    # Ambil data 5 tahun ke belakang untuk training yang kuat
     years_back = st.slider("Data Historis (Tahun)", 1, 10, 5)
     training_days = years_back * 365
 
     btn_analyze = st.button("Latih & Prediksi", type="primary", use_container_width=True)
 
-# --- FUNGSI ANALISA ---
+# --- FUNGSI DATA ---
 def get_data(ticker, days):
     end = date.today()
     start = end - timedelta(days=days)
-    df = yf.download(ticker, start=start, end=end)
+    df = yf.download(ticker, start=start, end=end, auto_adjust=True)
     if isinstance(df.columns, pd.MultiIndex):
         df.columns = df.columns.get_level_values(0)
     return df
 
 def add_features(df):
-    # 1. Indikator Standar
+    # Hindari SettingWithCopyWarning
+    df = df.copy()
+    
+    # 1. Indikator Momentum & Volatilitas
     df['RSI'] = ta.rsi(df['Close'], length=14)
-    macd = ta.macd(df['Close'])
-    df = pd.concat([df, macd], axis=1)
+    df['ATR'] = ta.atr(df['High'], df['Low'], df['Close'], length=14)
     
-    # 2. Price Action: Volatility & Spike
-    df['Body'] = abs(df['Close'] - df['Open'])
-    df['Vol_Avg'] = df['Volume'].rolling(window=20).mean()
-    df['Vol_Spike'] = (df['Volume'] > (df['Vol_Avg'] * 1.5)).astype(int)
+    # 2. Moving Averages (Trend)
+    df['MA20'] = ta.sma(df['Close'], length=20)
+    df['MA50'] = ta.sma(df['Close'], length=50)
     
-    # 3. Support & Resistance (Pivot Points Sederhana)
-    df['High_Roll'] = df['High'].rolling(window=20).max()
-    df['Low_Roll'] = df['Low'].rolling(window=20).min()
+    # 3. Price Action: Gap & Body
+    df['Pct_Change'] = df['Close'].pct_change()
+    df['Gap'] = (df['Open'] - df['Close'].shift(1)) / df['Close'].shift(1)
     
-    # 4. Momentum Lag
-    df['Return_1d'] = df['Close'].pct_change(1)
-    df['Return_5d'] = df['Close'].pct_change(5)
-    
-    # TARGET: Harga Close Besok (Untuk Regresi)
-    df['Target_Price'] = df['Close'].shift(-1)
+    # 4. Target: Selisih harga besok (Bukan harga mutlak agar lebih stabil)
+    # Kita memprediksi Log Return agar model lebih fokus pada pergerakan, bukan nominal
+    df['Target_Return'] = np.log(df['Close'].shift(-1) / df['Close'])
     
     return df.dropna()
 
 # --- EKSEKUSI ---
 if btn_analyze:
-    with st.spinner(f"Sedang menarik data {ticker} dan melatih AI..."):
+    with st.spinner(f"Menganalisis {ticker}..."):
         raw_df = get_data(ticker, training_days)
         
         if raw_df.empty:
@@ -66,73 +65,55 @@ if btn_analyze:
         else:
             df = add_features(raw_df)
             
-            # FITUR UNTUK MODEL
-            features = ['Open', 'Close', 'Volume', 'RSI', 'MACD_12_26_9', 
-                        'Vol_Spike', 'Return_1d', 'Return_5d', 'High_Roll', 'Low_Roll']
+            # FITUR TERPILIH
+            features = ['RSI', 'ATR', 'MA20', 'MA50', 'Pct_Change', 'Gap']
             
             X = df[features]
-            y = df['Target_Price']
+            y = df['Target_Return']
 
-            # Latih Model Regresi (Bukan Klasifikasi agar dapat angka harga)
-            model = RandomForestRegressor(n_estimators=200, random_state=42)
-            model.fit(X, y)
+            # --- VALIDASI: MENCEGAH OVERFITTING ---
+            # Kita bagi data menjadi Train (80%) dan Test (20%)
+            X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, shuffle=False)
 
-            # --- PREDIKSI MASA DEPAN ---
-            # Ambil baris terakhir dari data asli untuk input prediksi besok
-            last_data = raw_df.iloc[-1:].copy()
-            # Hitung indikator untuk baris terakhir tersebut
-            full_data_with_last = add_features(raw_df) 
-            x_input = full_data_with_last[features].iloc[-1:]
+            model = RandomForestRegressor(n_estimators=500, max_depth=10, random_state=42)
+            model.fit(X_train, y_train)
+
+            # Hitung akurasi pada data yang BELUM pernah dilihat model (X_test)
+            test_preds = model.predict(X_test)
+            real_accuracy = r2_score(y_test, test_preds) * 100
+
+            # --- PREDIKSI BESOK ---
+            last_row_features = X.tail(1)
+            pred_log_return = model.predict(last_row_features)[0]
             
-            pred_price = model.predict(x_input)[0]
             current_price = raw_df['Close'].iloc[-1]
+            # Konversi balik dari log return ke harga estimasi
+            pred_price = current_price * np.exp(pred_log_return)
             change_pct = ((pred_price - current_price) / current_price) * 100
 
-            # --- TAMPILAN DASHBOARD ---
+            # --- TAMPILAN ---
             col1, col2, col3 = st.columns(3)
             
             with col1:
                 st.metric("Harga Saat Ini", f"Rp {current_price:,.0f}")
             
             with col2:
-                color = "normal" if change_pct > 0 else "inverse"
-                st.metric("Prediksi Harga Besok", f"Rp {pred_price:,.0f}", f"{change_pct:.2f}%", delta_color=color)
+                delta_color = "normal" if change_pct > 0 else "inverse"
+                st.metric("Prediksi Harga Besok", f"Rp {pred_price:,.0f}", f"{change_pct:.2f}%", delta_color=delta_color)
             
             with col3:
-                # Menghitung akurasi simulasi pada data training
-                score = model.score(X, y) * 100
-                st.metric("Confidence Score (R²)", f"{score:.2f}%")
+                # Menampilkan akurasi asli (Out-of-sample)
+                st.metric("Akurasi Validasi (R²)", f"{real_accuracy:.2f}%")
 
             st.divider()
-
-            # --- PRICE ACTION DETAIL ---
-            st.subheader("💡 Analisa Price Action & SNR")
-            c1, c2, c3 = st.columns(3)
             
-            last_row = full_data_with_last.iloc[-1]
-            with c1:
-                st.write(f"**Support (20d):** {last_row['Low_Roll']:,.0f}")
-                st.write(f"**Resistance (20d):** {last_row['High_Roll']:,.0f}")
-            
-            with c2:
-                vol_status = "SPIKE! 🔥" if last_row['Vol_Spike'] == 1 else "Normal"
-                st.write(f"**Status Volume:** {vol_status}")
-                st.write(f"**RSI (14):** {last_row['RSI']:.2f}")
-
-            with c3:
-                trend = "Bullish" if last_row['Return_5d'] > 0 else "Bearish"
-                st.write(f"**Trend 5 Hari:** {trend}")
-                st.write(f"**MACD:** {last_row['MACD_12_26_9']:.4f}")
-
-            # Tabel Data Terakhir
-            st.subheader("Data Historis Terakhir")
-            st.dataframe(full_data_with_last[features + ['Target_Price']].tail(10))
-
-            st.info("""
-            **Cara Membaca:** 
-            - **Confidence Score:** Semakin mendekati 100%, semakin baik model mempelajari pola masa lalu.
-            - **Prediksi Harga:** Ini adalah angka estimasi penutupan market besok.
-            - Gunakan Support & Resistance sebagai batasan Stop Loss dan Take Profit manual.
-            """)
-st.divider()
-st.caption("💡 Dibuat oleh Yonz Suharyono | Menggunakan Random Forest Classifier")
+            # --- STATUS SIGNAL ---
+            st.subheader("📊 Signal Strength")
+            if real_accuracy < 0:
+                st.warning("⚠️ Model sedang kesulitan mengenali pola (Akurasi Minus). Jangan gunakan prediksi ini sebagai patokan utama.")
+            elif change_pct > 0.5 and real_accuracy > 10:
+                st.success("🚀 Sinyal BULLISH Terdeteksi")
+            elif change_pct < -0.5 and real_accuracy > 10:
+                st.error("📉 Sinyal BEARISH Terdeteksi")
+            else:
+                st.info("⚖️ Sinyal NETRAL / Konsolidasi")
