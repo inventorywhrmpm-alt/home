@@ -62,6 +62,8 @@ def get_fibonacci_analysis(ticker_input, timeframe):
             "Ticker": clean_ticker,
             "Price": round(current_price, 2),
             "Status": status_ket,
+            "Target Level": target_lvl,
+            "Target Price": target_px,
             "Fibo 23.6%": fib_levels["23.6%"],
             "Fibo 38.2%": fib_levels["38.2%"],
             "Fibo 50.0%": fib_levels["50.0%"],
