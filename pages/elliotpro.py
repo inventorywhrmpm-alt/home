@@ -84,7 +84,7 @@ try:
             # Plot
             color = "green" if found_mode == "BULLISH" else "red"
             fig = go.Figure()
-            fig.add_trace(go.Scatter(x=df.index, y=df['Close'], name='Price', line=dict(color='green')))
+            fig.add_trace(go.Scatter(x=df.index, y=df['Close'], name='Price', line=dict(color='blue')))
             fig.add_trace(go.Scatter(x=valid_waves.index, y=valid_waves['Close'], 
                                      mode='lines+markers+text',
                                      text=valid_waves['Wave_Label'],
