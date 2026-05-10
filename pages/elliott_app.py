@@ -9,19 +9,23 @@ from scipy.signal import argrelextrema
 st.set_page_config(page_title="IDX Elliott Wave Analyzer", layout="wide")
 
 st.title("📈 IDX Elliott Wave Analyzer")
-st.write("Analisis otomatis gelombang Elliott untuk saham di Bursa Efek Indonesia.")
+st.write("Analisis otomatis gelombang Elliott untuk saham IDX.")
 
 # Input Ticker
-ticker_input = st.text_input("Masukkan Kode Saham (contoh: BBCA, TLKM, GOTO):", "BBCA").upper()
+ticker_input = st.text_input("Masukkan Kode Saham (contoh: BBCA, ASII, ANTM):", "BBCA").upper()
 ticker = f"{ticker_input}.JK"
 
 # Sidebar untuk parameter
-period = st.sidebar.selectbox("Periode Data", ["1mo", "3mo", "6mo", "1y", "2y"], index=3)
-order = st.sidebar.slider("Sensitivitas Wave (Order)", 5, 50, 20)
+period = st.sidebar.selectbox("Periode Data", ["3mo", "6mo", "1y", "2y", "5y"], index=2)
+order = st.sidebar.slider("Sensitivitas Wave (Semakin besar semakin selektif)", 5, 50, 15)
 
 @st.cache_data
 def load_data(symbol, period):
+    # Mengambil data harga
     df = yf.download(symbol, period=period, interval="1d")
+    # Menghapus MultiIndex pada kolom jika ada (versi yfinance terbaru)
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = df.columns.get_level_values(0)
     return df
 
 try:
@@ -30,61 +34,71 @@ try:
     if data.empty:
         st.error("Data tidak ditemukan. Pastikan kode ticker benar.")
     else:
-        # Deteksi Peaks dan Troughs untuk Elliott Wave
-        data['Close_Smooth'] = data['Close'].rolling(window=5).mean() # Smoothing sedikit
-        data.dropna(inplace=True)
+        # Cari titik ekstrim (puncak dan lembah)
+        # Menggunakan harga Close
+        close_prices = data['Close'].values
         
-        # Cari titik ekstrim
-        ilocs_max = argrelextrema(data['Close'].values, np.greater, order=order)[0]
-        ilocs_min = argrelextrema(data['Close'].values, np.less, order=order)[0]
+        ilocs_max = argrelextrema(close_prices, np.greater, order=order)[0]
+        ilocs_min = argrelextrema(close_prices, np.less, order=order)[0]
         
-        # Gabungkan dan urutkan berdasarkan waktu
-        extrema = pd.concat([data.iloc[ilocs_max], data.iloc[ilocs_min]]).sort_index()
+        # Gabungkan titik puncak dan lembah
+        extrema_indices = np.sort(np.concatenate((ilocs_max, ilocs_min)))
+        extrema = data.iloc[extrema_indices].copy()
         
-        # Ambil 5 titik terakhir sebagai representasi Wave 1-5
+        # Ambil 5 titik terakhir
         if len(extrema) >= 5:
             last_5_waves = extrema.tail(5).copy()
             last_5_waves['Wave_Label'] = ['Wave 1', 'Wave 2', 'Wave 3', 'Wave 4', 'Wave 5']
             
-            # --- TABEL 1: DATA HARGA WAVE ---
-            st.subheader(f"Tabel 1: Titik Harga Elliott Wave - {ticker_input}")
-            st.table(last_5_waves[['Close']].rename(columns={'Close': 'Harga Penutupan'}))
+            # --- FORMATTING HARGA (Hapus Nol di Belakang Koma) ---
+            # Kita bulatkan ke integer untuk tampilan tabel
+            display_table = last_5_waves[['Close']].copy()
+            display_table['Harga'] = display_table['Close'].astype(int)
             
+            st.subheader(f"Tabel Harga Elliott Wave - {ticker_input}")
+            st.table(display_table[['Harga']].T) # Transpose agar hemat ruang
+
             # --- VISUALISASI ---
             fig = go.Figure()
-            fig.add_trace(go.Scatter(x=data.index, y=data['Close'], name='Harga Saham', line=dict(color='gray', width=1)))
+            # Garis Harga Utama
+            fig.add_trace(go.Scatter(x=data.index, y=data['Close'], name='Harga', line=dict(color='lightgray', width=1)))
+            # Garis Elliott Wave
             fig.add_trace(go.Scatter(x=last_5_waves.index, y=last_5_waves['Close'], 
                                      mode='lines+markers+text',
-                                     name='Elliott Wave Count',
+                                     name='Elliott Wave Path',
                                      text=last_5_waves['Wave_Label'],
                                      textposition="top center",
-                                     line=dict(color='blue', width=3)))
+                                     line=dict(color='orange', width=3)))
             
             st.plotly_chart(fig, use_container_width=True)
 
-            # --- KESIMPULAN STATUS ---
-            p1, p2, p3, p4, p5 = last_5_waves['Close'].values
+            # --- LOGIKA KESIMPULAN ---
+            prices = last_5_waves['Close'].values
+            p1, p2, p3, p4, p5 = prices[0], prices[1], prices[2], prices[3], prices[4]
             
             st.subheader("📌 Kesimpulan Status & Proyeksi")
             
-            # Logika Sederhana Elliott Wave
-            is_bullish = p3 > p1 and p5 > p3 and p4 > p2
+            # Aturan dasar Elliott: Wave 3 biasanya bukan yang terpendek 
+            # dan Wave 4 tidak boleh masuk ke area Wave 1 (dalam teori dasar)
+            is_bullish_impulse = (p3 > p1) and (p5 > p3) and (p4 > p2)
             
-            if is_bullish:
-                current_status = "Siklus Impulsif Bullish (1-2-3-4-5) terdeteksi."
-                next_move = "Memasuki Fase Koreksi (ABC). Waspadai penurunan harga sementara."
+            if is_bullish_impulse:
+                status = "🚀 FASE BULLISH IMPULSIF"
+                detail = "Saham telah menyelesaikan atau sedang di ujung Wave 5."
+                arah = "Akan menuju Fase Koreksi ABC (Penurunan Sementara)."
+                color = "green"
             else:
-                current_status = "Siklus sedang berkonsolidasi atau dalam pola korektif."
-                next_move = "Menunggu konfirmasi terbentuknya Low baru untuk memulai Wave 1 yang baru."
+                status = "📉 FASE KOREKTIF / CONSOLIDATION"
+                detail = "Pola 5 gelombang naik tidak sempurna. Saat ini harga cenderung membentuk struktur ABC atau Sideways."
+                arah = "Mencari titik support (Bottom) untuk membentuk siklus baru."
+                color = "orange"
 
-            col1, col2 = st.columns(2)
-            col1.metric("Status Fase Sekarang", "Bullish" if is_bullish else "Korektif/Sideways")
-            col2.metric("Proyeksi Berikutnya", "Koreksi ABC" if is_bullish else "Akumulasi")
-            
-            st.info(f"**Analisis:** {current_status} Harga kemungkinan besar **{next_move}**.")
+            st.markdown(f"**Status:** <span style='color:{color}'>{status}</span>", unsafe_allow_html=True)
+            st.write(f"**Detail:** {detail}")
+            st.write(f"**Arah Selanjutnya:** {arah}")
             
         else:
-            st.warning("Data tidak cukup untuk mendeteksi 5 gelombang. Coba perpanjang periode atau kurangi sensitivitas di sidebar.")
+            st.warning(f"Titik balik tidak cukup terdeteksi dengan sensitivitas {order}. Coba kecilkan angka 'Sensitivitas' di sidebar.")
 
 except Exception as e:
     st.error(f"Terjadi kesalahan: {e}")
