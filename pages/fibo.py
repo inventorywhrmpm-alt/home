@@ -2,30 +2,33 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 
-# Fungsi untuk menghitung Fibonacci dengan pembersihan data ketat
-def get_clean_fibonacci(ticker_input):
-    # 1. Standarisasi Ticker (hapus .JK jika user input manual, lalu tambah lagi untuk yfinance)
+# Fungsi untuk menghitung Fibonacci dengan pilihan interval
+def get_clean_fibonacci(ticker_input, timeframe):
+    # Standarisasi Ticker
     clean_ticker = ticker_input.strip().upper().replace(".JK", "")
     yf_ticker = f"{clean_ticker}.JK"
     
+    # Konfigurasi period berdasarkan interval agar data cukup untuk High/Low
+    # Jika 1h/4h, kita ambil data 60 hari terakhir (cukup untuk intraday)
+    # Jika 1d, kita ambil 60 hari atau lebih
+    period_map = "60d" 
+
     try:
-        # Ambil data 60 hari terakhir
-        df = yf.download(yf_ticker, period="60d", interval="1d", progress=False)
+        df = yf.download(yf_ticker, period=period_map, interval=timeframe, progress=False)
         
         if df.empty:
             return None
 
-        # 2. Ambil nilai skalar menggunakan .item() agar tidak muncul 'dtype' atau 'Name'
-        # Kita ambil baris terakhir untuk harga penutupan terbaru
+        # Ambil nilai skalar dengan .item() untuk membuang dtype/noise
         current_price = float(df['Close'].iloc[-1].item())
         high_price = float(df['High'].max().item())
         low_price = float(df['Low'].min().item())
         
         diff = high_price - low_price
 
-        # 3. Masukkan ke dictionary (Hanya angka murni)
         return {
             "Ticker": clean_ticker,
+            "TF": timeframe,
             "Price": round(current_price, 2),
             "High": round(high_price, 2),
             "Low": round(low_price, 2),
@@ -37,42 +40,52 @@ def get_clean_fibonacci(ticker_input):
             "Fib 78.6%": round(high_price - (0.786 * diff), 2),
             "Fib 100%": round(low_price, 2)
         }
-    except Exception as e:
+    except Exception:
         return None
 
-# --- KONFIGURASI STREAMLIT ---
-st.set_page_config(page_title="IDX Fibonacci Table", layout="wide")
+# --- UI STREAMLIT ---
+st.set_page_config(page_title="IDX Fibonacci Multi-TF", layout="wide")
 
-st.title("📈 IDX Fibonacci Retracement")
-st.write("Menghitung level Fibonacci berdasarkan High/Low 60 hari terakhir.")
+# Sidebar untuk Input agar area utama fokus ke Tabel
+with st.sidebar:
+    st.header("Konfigurasi Scanner")
+    input_user = st.text_input("Ticker (pisahkan koma)", "SCMA, BBCA, TLKM")
+    
+    # PILIHAN TIMEFRAME
+    tf_choice = st.selectbox(
+        "Pilih Timeframe:",
+        options=["1h", "4h", "1d"],
+        index=2  # Default ke 1d
+    )
+    
+    btn_generate = st.button("Generate Tabel")
 
-# Input ticker (bisa banyak dipisah koma)
-input_user = st.text_input("Masukkan Ticker Saham (Contoh: SCMA, BBCA, GOTO)", "SCMA, BBCA")
+st.title("📊 Fibonacci Retracement Scanner")
+st.info(f"Menganalisis data berdasarkan High & Low dalam 60 hari terakhir dengan interval **{tf_choice}**")
 
-if st.button("Generate Tabel"):
+if btn_generate:
     tickers = [t.strip() for t in input_user.split(",")]
     results = []
 
-    with st.spinner('Processing data...'):
+    with st.spinner(f'Mengambil data {tf_choice} dari Yahoo Finance...'):
         for t in tickers:
-            data = get_clean_fibonacci(t)
+            data = get_clean_fibonacci(t, tf_choice)
             if data:
                 results.append(data)
     
     if results:
-        # Membuat DataFrame dari list of dictionaries
         final_df = pd.DataFrame(results)
         
-        # Menampilkan tabel bersih di Streamlit
-        st.subheader("Hasil Analisis Retracement")
+        # Tampilkan Tabel
+        st.subheader(f"Hasil Analisis - Timeframe {tf_choice}")
         st.dataframe(
             final_df, 
             use_container_width=True, 
-            hide_index=True # Sembunyikan kolom index angka di kiri
+            hide_index=True 
         )
         
-        # Tombol Download
+        # Download
         csv = final_df.to_csv(index=False).encode('utf-8')
-        st.download_button("Download Tabel (CSV)", csv, "fibonacci_idx.csv", "text/csv")
+        st.download_button("Download CSV", csv, f"fib_{tf_choice}_idx.csv", "text/csv")
     else:
-        st.error("Gagal mengambil data. Pastikan kode ticker benar.")
+        st.error("Data tidak ditemukan. Cek kembali penulisan ticker.")
