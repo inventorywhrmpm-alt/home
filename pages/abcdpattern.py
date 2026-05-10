@@ -5,18 +5,16 @@ import numpy as np
 from scipy.signal import argrelextrema
 
 # Konfigurasi Halaman
-st.set_page_config(page_title="IDX Pattern Scanner", layout="wide")
+st.set_page_config(page_title="IDX Multi-Scanner", layout="wide")
 
-st.title("📈 IDX Trend & Phase Scanner")
+st.title("📈 IDX Multi-Ticker Phase Scanner")
+st.write("Masukkan beberapa kode saham dipisahkan dengan koma untuk analisis massal.")
 
 # Sidebar Input
-ticker_input = st.sidebar.text_input("Masukkan Kode Saham (Tanpa .JK)", "SCMA").upper().strip()
-ticker = f"{ticker_input}.JK" if not ticker_input.endswith(".JK") else ticker_input
-
+ticker_input_raw = st.sidebar.text_input("Masukkan Kode Saham (Contoh: BBCA, SCMA, TLKM)", "BBCA, SCMA, TLKM")
 window = st.sidebar.slider("Sensitivitas Deteksi (Window)", 3, 20, 5)
 
 def analyze_structure(prices, order):
-    # Mencari Puncak dan Lembah
     peak_idx = argrelextrema(prices, np.greater, order=order)[0]
     valley_idx = argrelextrema(prices, np.less, order=order)[0]
     
@@ -29,7 +27,7 @@ def analyze_structure(prices, order):
     target = current_price
     
     if len(extrema) < 3:
-        return "Konsolidasi", "Data Kurang/Sideways", current_price
+        return "Sideways", "Data Kurang", current_price
 
     last_point_val = float(extrema[-1][1])
     last_point_type = extrema[-1][2]
@@ -37,71 +35,64 @@ def analyze_structure(prices, order):
     
     if last_point_type == 'Valley':
         if current_price > last_point_val:
-            fase = "Impulse Up (Bullish)"
-            kemungkinan = "Menuju Peak Baru"
+            fase = "Impulse Up 🚀"
+            kemungkinan = "Menuju Peak"
             target = last_point_val + (abs(prev_point_val - last_point_val) * 1.618)
         else:
-            fase = "Downtrend"
+            fase = "Downtrend 📉"
             kemungkinan = "Mencari Support"
             target = last_point_val * 0.95
             
     elif last_point_type == 'Peak':
         if current_price < last_point_val:
-            fase = "Correction Down (Bearish)"
-            kemungkinan = "Mencari Valley Baru"
+            fase = "Correction ⚠️"
+            kemungkinan = "Mencari Valley"
             target = prev_point_val + (abs(last_point_val - prev_point_val) * 0.618)
         else:
-            fase = "Strong Breakout"
-            kemungkinan = "Uptrend Berlanjut"
+            fase = "Strong Breakout 🔥"
+            kemungkinan = "Uptrend Lanjut"
             target = last_point_val * 1.05
     
     return fase, kemungkinan, float(target)
 
-# Ambil Data
-try:
-    # Menggunakan group_by='column' untuk mempermudah akses
-    data = yf.download(ticker, period="1y", interval="1d", progress=False)
+# Memproses List Ticker
+ticker_list = [t.strip().upper() for t in ticker_input_raw.split(",")]
+all_results = []
 
-    if not data.empty:
-        # PERBAIKAN UTAMA: Memastikan data Close benar-benar menjadi Array 1D yang bersih
-        # Kita ambil kolom 'Close' dan ratakan (flatten) untuk membuang MultiIndex
-        close_prices = data['Close'].values.flatten()
-        # Buang nilai NaN jika ada
-        close_prices = close_prices[~np.isnan(close_prices)]
-        
-        if len(close_prices) < 2:
-            st.error("Data saham tidak mencukupi.")
-        else:
-            current_price = float(close_prices[-1])
-            prev_price = float(close_prices[-2])
-            change = ((current_price - prev_price) / prev_price) * 100
+if st.button("Jalankan Analisis"):
+    for t_name in ticker_list:
+        ticker_jk = f"{t_name}.JK"
+        try:
+            data = yf.download(ticker_jk, period="1y", interval="1d", progress=False)
             
-            fase, prediksi, harga_target = analyze_structure(close_prices, window)
+            if not data.empty:
+                close_prices = data['Close'].values.flatten()
+                close_prices = close_prices[~np.isnan(close_prices)]
+                
+                if len(close_prices) >= 2:
+                    current_price = float(close_prices[-1])
+                    prev_price = float(close_prices[-2])
+                    change = ((current_price - prev_price) / prev_price) * 100
+                    
+                    fase, prediksi, harga_target = analyze_structure(close_prices, window)
+                    
+                    all_results.append({
+                        "Ticker": t_name,
+                        "Price": f"Rp {current_price:,.0f}",
+                        "Change": f"{change:+.2f}%",
+                        "Phase": fase,
+                        "Next Move": prediksi,
+                        "Target": f"Rp {harga_target:,.0f}"
+                    })
+            else:
+                st.warning(f"Data {t_name} tidak ditemukan.")
+        except Exception as e:
+            st.error(f"Error pada {t_name}: {e}")
 
-            # Menampilkan Tabel Hasil
-            hasil_data = {
-                "Indikator": [
-                    "Kode Saham", 
-                    "Harga Terakhir", 
-                    "Perubahan (%)", 
-                    "Fase Saat Ini", 
-                    "Prediksi Selanjutnya", 
-                    "Estimasi Target"
-                ],
-                "Nilai": [
-                    ticker_input, 
-                    f"Rp {current_price:,.0f}", 
-                    f"{change:+.2f}%", 
-                    fase, 
-                    prediksi, 
-                    f"Rp {harga_target:,.0f}"
-                ]
-            }
-            
-            df_hasil = pd.DataFrame(hasil_data)
-            st.subheader(f"Analisis Teknikal: {ticker_input}")
-            st.table(df_hasil)
+    # Menampilkan Tabel Final
+    if all_results:
+        df_final = pd.DataFrame(all_results)
+        st.subheader("📋 Hasil Pemindaian Massal")
+        st.dataframe(df_final, use_container_width=True, hide_index=True)
     else:
-        st.error(f"Data untuk {ticker_input} tidak ditemukan atau kosong.")
-except Exception as e:
-    st.error(f"Terjadi kesalahan: {e}")
+        st.info("Silakan masukkan kode saham dan klik tombol Jalankan Analisis.")
