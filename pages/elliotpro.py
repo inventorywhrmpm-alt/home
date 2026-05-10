@@ -77,7 +77,7 @@ try:
 
             # --- PLOT ---
             fig = go.Figure()
-            fig.add_trace(go.Scatter(x=df.index, y=df['Close'], name='Price', line=dict(color='lightgray')))
+            fig.add_trace(go.Scatter(x=df.index, y=df['Close'], name='Price', line=dict(color='green')))
             fig.add_trace(go.Scatter(x=valid_waves.index, y=valid_waves['Close'], 
                                      mode='lines+markers+text',
                                      textposition="top center",
