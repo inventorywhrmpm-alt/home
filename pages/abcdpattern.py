@@ -24,7 +24,8 @@ def get_data(ticker):
         return None
 
 def analyze_structure(df, order):
-    prices = df['Close'].values
+    # Pastikan mengambil nilai Close sebagai array 1D
+    prices = df['Close'].values.flatten()
     
     # Mencari Puncak dan Lembah
     peak_idx = argrelextrema(prices, np.greater, order=order)[0]
@@ -32,42 +33,48 @@ def analyze_structure(df, order):
     
     # Menggabungkan dan mengurutkan titik ekstrem
     extrema = []
-    for p in peak_idx: extrema.append((p, prices[p], 'Peak'))
-    for v in valley_idx: extrema.append((v, prices[v], 'Valley'))
+    for p in peak_idx: extrema.append((p, float(prices[p]), 'Peak'))
+    for v in valley_idx: extrema.append((v, float(prices[v]), 'Valley'))
     extrema.sort(key=lambda x: x[0])
     
-    if len(extrema) < 3:
-        return "Data tidak cukup untuk membentuk pola", "N/A", "N/A"
+    # Default values jika tidak memenuhi syarat
+    fase = "Konsolidasi"
+    kemungkinan = "Wait and See"
+    target = float(prices[-1]) # Default target ke harga saat ini
 
-    # Ambil 3 titik terakhir untuk menentukan fase
-    last_point = extrema[-1]
-    prev_point = extrema[-2]
-    current_price = prices[-1]
+    if len(extrema) < 3:
+        return "Data Kurang", "Ganti Sensitivitas", target
+
+    # Ambil titik terakhir untuk logika
+    last_point_val = float(extrema[-1][1])
+    last_point_type = extrema[-1][2]
+    prev_point_val = float(extrema[-2][1])
+    current_price = float(prices[-1])
     
-    # Logika Fase
-    if last_point[2] == 'Valley':
-        # Jika titik terakhir adalah lembah, dan harga sekarang di atas lembah tersebut
-        if current_price > last_point[1]:
-            fase = "Impulse Up (Awal Kenaikan)"
+    # Logika Fase & Target
+    if last_point_type == 'Valley':
+        if current_price > last_point_val:
+            fase = "Impulse Up (Bullish)"
             kemungkinan = "Menuju Peak Baru"
-            target = last_point[1] + (prev_point[1] - last_point[1]) * 1.618
+            # Fibonacci Extension 1.618
+            target = last_point_val + (abs(prev_point_val - last_point_val) * 1.618)
         else:
-            fase = "Downtrend Extreme"
-            kemungkinan = "Mencari Bottom"
-            target = last_point[1] * 0.95
+            fase = "Downtrend"
+            kemungkinan = "Mencari Support"
+            target = last_point_val * 0.95
             
-    elif last_point[2] == 'Peak':
-        # Jika titik terakhir adalah puncak, dan harga sekarang mulai turun
-        if current_price < last_point[1]:
-            fase = "Correction Down (Konsolidasi/Profit Taking)"
-            kemungkinan = "Mencari Support (Valley) Baru"
-            target = prev_point[1] + (last_point[1] - prev_point[1]) * 0.618
+    elif last_point_type == 'Peak':
+        if current_price < last_point_val:
+            fase = "Correction Down (Bearish)"
+            kemungkinan = "Mencari Valley Baru"
+            # Fibonacci Retracement 0.618
+            target = prev_point_val + (abs(last_point_val - prev_point_val) * 0.618)
         else:
-            fase = "Strong Uptrend"
-            kemungkinan = "Breakout Resistance"
-            target = last_point[1] * 1.05
+            fase = "Strong Breakout"
+            kemungkinan = "Uptrend Berlanjut"
+            target = last_point_val * 1.05
     
-    return fase, kemungkinan, round(target, 2)
+    return fase, kemungkinan, float(target)
 
 # Main Logic
 data = get_data(ticker)
