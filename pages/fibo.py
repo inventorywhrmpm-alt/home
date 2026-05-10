@@ -1,91 +1,105 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
+import numpy as np
 
-# Fungsi untuk menghitung Fibonacci dengan pilihan interval
-def get_clean_fibonacci(ticker_input, timeframe):
-    # Standarisasi Ticker
+def get_fibonacci_analysis(ticker_input, timeframe):
     clean_ticker = ticker_input.strip().upper().replace(".JK", "")
     yf_ticker = f"{clean_ticker}.JK"
     
-    # Konfigurasi period berdasarkan interval agar data cukup untuk High/Low
-    # Jika 1h/4h, kita ambil data 60 hari terakhir (cukup untuk intraday)
-    # Jika 1d, kita ambil 60 hari atau lebih
-    period_map = "60d" 
-
     try:
-        df = yf.download(yf_ticker, period=period_map, interval=timeframe, progress=False)
-        
-        if df.empty:
-            return None
+        df = yf.download(yf_ticker, period="60d", interval=timeframe, progress=False)
+        if df.empty: return None
 
-        # Ambil nilai skalar dengan .item() untuk membuang dtype/noise
         current_price = float(df['Close'].iloc[-1].item())
         high_price = float(df['High'].max().item())
         low_price = float(df['Low'].min().item())
-        
         diff = high_price - low_price
+
+        # Definisi Level Fibonacci (Tanpa 0% dan 100%)
+        fib_levels = {
+            "23.6%": round(high_price - (0.236 * diff), 2),
+            "38.2%": round(high_price - (0.382 * diff), 2),
+            "50.0%": round(high_price - (0.5 * diff), 2),
+            "61.8%": round(high_price - (0.618 * diff), 2),
+            "78.6%": round(high_price - (0.786 * diff), 2)
+        }
+
+        # --- Logika Penentuan Posisi & Target ---
+        # Gabungkan semua level untuk perbandingan
+        all_points = sorted([
+            {"lvl": "100%", "px": low_price},
+            {"lvl": "78.6%", "px": fib_levels["78.6%"]},
+            {"lvl": "61.8%", "px": fib_levels["61.8%"]},
+            {"lvl": "50.0%", "px": fib_levels["50.0%"]},
+            {"lvl": "38.2%", "px": fib_levels["38.2%"]},
+            {"lvl": "23.6%", "px": fib_levels["23.6%"]},
+            {"lvl": "0%", "px": high_price}
+        ], key=lambda x: x['px'])
+
+        status_ket = "Di luar range"
+        target_lvl = "-"
+        target_px = 0.0
+
+        for i in range(len(all_points) - 1):
+            lower = all_points[i]
+            upper = all_points[i+1]
+            
+            if lower['px'] <= current_price <= upper['px']:
+                # Cek mana yang lebih dekat
+                dist_lower = abs(current_price - lower['px'])
+                dist_upper = abs(current_price - upper['px'])
+                
+                closer = lower['lvl'] if dist_lower < dist_upper else upper['lvl']
+                status_ket = f"Dekat {closer}"
+                
+                # Target adalah level di atasnya jika sedang naik, atau level itu sendiri jika belum tercapai
+                target_lvl = upper['lvl']
+                target_px = upper['px']
+                break
 
         return {
             "Ticker": clean_ticker,
-            "TF": timeframe,
             "Price": round(current_price, 2),
-            "High": round(high_price, 2),
-            "Low": round(low_price, 2),
-            "Fib 0.0%": round(high_price, 2),
-            "Fib 23.6%": round(high_price - (0.236 * diff), 2),
-            "Fib 38.2%": round(high_price - (0.382 * diff), 2),
-            "Fib 50.0%": round(high_price - (0.5 * diff), 2),
-            "Fib 61.8%": round(high_price - (0.618 * diff), 2),
-            "Fib 78.6%": round(high_price - (0.786 * diff), 2),
-            "Fib 100%": round(low_price, 2)
+            "Status": status_ket,
+            "Target Level": target_lvl,
+            "Target Price": target_px,
+            "Fibo 23.6%": fib_levels["23.6%"],
+            "Fibo 38.2%": fib_levels["38.2%"],
+            "Fibo 50.0%": fib_levels["50.0%"],
+            "Fibo 61.8%": fib_levels["61.8%"],
+            "Fibo 78.6%": fib_levels["78.6%"],
+            "High (Ref)": high_price,
+            "Low (Ref)": low_price
         }
-    except Exception:
-        return None
+    except: return None
 
 # --- UI STREAMLIT ---
-st.set_page_config(page_title="IDX Fibonacci Multi-TF", layout="wide")
+st.set_page_config(page_title="IDX Fibonacci Pro", layout="wide")
 
-# Sidebar untuk Input agar area utama fokus ke Tabel
 with st.sidebar:
-    st.header("Konfigurasi Scanner")
-    input_user = st.text_input("Ticker (pisahkan koma)", "SCMA, BBCA, TLKM")
-    
-    # PILIHAN TIMEFRAME
-    tf_choice = st.selectbox(
-        "Pilih Timeframe:",
-        options=["1h", "4h", "1d"],
-        index=2  # Default ke 1d
-    )
-    
-    btn_generate = st.button("Generate Tabel")
+    st.header("Settings")
+    input_user = st.text_input("Ticker (contoh: SCMA, BBCA)", "SCMA, BBCA, GOTO")
+    tf_choice = st.selectbox("Timeframe:", ["1h", "4h", "1d"], index=2)
+    btn_run = st.button("Analyze")
 
-st.title("📊 Fibonacci Retracement Scanner")
-st.info(f"Menganalisis data berdasarkan High & Low dalam 60 hari terakhir dengan interval **{tf_choice}**")
+st.title("🎯 Fibonacci Target & Status")
 
-if btn_generate:
+if btn_run:
     tickers = [t.strip() for t in input_user.split(",")]
     results = []
-
-    with st.spinner(f'Mengambil data {tf_choice} dari Yahoo Finance...'):
-        for t in tickers:
-            data = get_clean_fibonacci(t, tf_choice)
-            if data:
-                results.append(data)
+    
+    for t in tickers:
+        data = get_fibonacci_analysis(t, tf_choice)
+        if data: results.append(data)
     
     if results:
-        final_df = pd.DataFrame(results)
+        df = pd.DataFrame(results)
         
-        # Tampilkan Tabel
-        st.subheader(f"Hasil Analisis - Timeframe {tf_choice}")
-        st.dataframe(
-            final_df, 
-            use_container_width=True, 
-            hide_index=True 
-        )
+        # Penataan kolom agar Status dan Target berada di depan
+        cols = ["Ticker", "Price", "Status", "Target Level", "Target Price", 
+                "Fibo 23.6%", "Fibo 38.2%", "Fibo 50.0%", "Fibo 61.8%", "Fibo 78.6%"]
         
-        # Download
-        csv = final_df.to_csv(index=False).encode('utf-8')
-        st.download_button("Download CSV", csv, f"fib_{tf_choice}_idx.csv", "text/csv")
+        st.dataframe(df[cols], use_container_width=True, hide_index=True)
     else:
-        st.error("Data tidak ditemukan. Cek kembali penulisan ticker.")
+        st.error("Data tidak ditemukan.")
