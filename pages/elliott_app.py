@@ -61,7 +61,7 @@ try:
             # --- VISUALISASI ---
             fig = go.Figure()
             # Garis Harga Utama
-            fig.add_trace(go.Scatter(x=data.index, y=data['Close'], name='Harga', line=dict(color='lightgray', width=1)))
+            fig.add_trace(go.Scatter(x=data.index, y=data['Close'], name='Harga', line=dict(color='green', width=1)))
             # Garis Elliott Wave
             fig.add_trace(go.Scatter(x=last_5_waves.index, y=last_5_waves['Close'], 
                                      mode='lines+markers+text',
