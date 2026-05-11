@@ -56,7 +56,7 @@ def calculate_supertrend(df, period=10, multiplier=1.0):
 st.set_page_config(page_title="Supertrend Fix", layout="wide")
 
 st.sidebar.header("Setting")
-ticker = st.sidebar.text_input("Kode Saham", value="MINA").upper()
+ticker = st.sidebar.text_input("Kode Saham", value="SCMA").upper()
 atr_p = st.sidebar.number_input("ATR Period", value=10)
 atr_m = st.sidebar.number_input("Multiplier", value=1.0, step=0.1)
 
