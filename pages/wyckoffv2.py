@@ -1,16 +1,22 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+import yfinance as yf
 
 # Set Konfigurasi Halaman Streamlit
-st.set_page_config(page_title="Wyckoff Event Detection Table", layout="wide")
+st.set_page_config(page_title="Wyckoff Event Detection Table (IDX)", layout="wide")
 
-st.title("💎 Wyckoff Event Detection Table (Pure Logic)")
-st.caption("Aplikasi ini mempertahankan 100% logika kalkulasi Pine Script tanpa grafik.")
+st.title("💎 IDX Wyckoff Event Detection Table")
+st.caption("Aplikasi ini menggunakan data riil saham BEI (IDX) dan mempertahankan 100% logika kalkulasi Pine Script tanpa grafik.")
 
 # ==========================================
 # 1. SIDEBAR CONFIGURATION (INPUTS)
 # ==========================================
+st.sidebar.header("Pilih Saham IDX")
+# User cukup mengetik kode saham tanpa perlu repot mengetik .JK
+ticker_input = st.sidebar.text_input("Masukkan Kode Saham (Ticker)", value="BBRI").upper().strip()
+ticker_idx = f"{ticker_input}.JK"
+
 st.sidebar.header("General Settings")
 i_volLen = st.sidebar.number_input("Volume MA Length", min_value=1, value=20)
 i_priceLookback = st.sidebar.number_input("Price Pattern Lookback", min_value=5, value=20)
@@ -30,43 +36,32 @@ i_volumeFilter = st.sidebar.slider("Volume Filter", 1.0, 5.0, 1.5, 0.1)
 i_priceRangeFilter = st.sidebar.slider("Price Range Filter", 0.1, 1.0, 0.5, 0.1)
 
 # ==========================================
-# 2. GENERATE / LOAD DATA
+# 2. DOWNLOAD DATA REAL-TIME DARI YFINANCE
 # ==========================================
-@st.cache_data
-def load_simulated_market_data():
-    np.random.seed(42)
-    n = 150
-    price = 100.0
-    opens, highs, lows, closes, volumes = [], [], [], [], []
+@st.cache_data(ttl=3600) # Simpan cache selama 1 jam agar hemat kuota internet
+def load_idx_data(ticker):
+    try:
+        # Mengambil data harian sepanjang 1 tahun terakhir
+        data = yf.download(ticker, period="1y", interval="1d")
+        if data.empty:
+            return pd.DataFrame()
+        # Meratakan multi-level index jika ada (fitur yfinance versi baru)
+        data = data.reset_index()
+        data.columns = [col[0] if isinstance(col, tuple) else col for col in data.columns]
+        return data
+    except Exception as e:
+        return pd.DataFrame()
+
+# Proses Memuat Data
+if ticker_input:
+    df = load_idx_data(ticker_idx)
     
-    for i in range(n):
-        # Membuat siklus naik turun buatan agar memicu kondisi Wyckoff
-        if i < 40: move = np.random.normal(0.1, 0.4)
-        elif i < 80: move = np.random.normal(0.7, 0.5)
-        elif i < 120: move = np.random.normal(-0.2, 0.6)
-        else: move = np.random.normal(-0.8, 0.6)
-            
-        price += move
-        op = price - np.random.uniform(-0.4, 0.4)
-        hi = max(price, op) + np.random.uniform(0, 1.0)
-        lo = min(price, op) - np.random.uniform(0, 1.0)
-        vol = np.random.uniform(300, 1500)
-        
-        # Trigger anomali volume tinggi buatan pada bar tertentu
-        if i in [35, 75, 115]: 
-            vol *= 3.5
-            hi += 3.0
-            lo -= 3.0
-
-        opens.append(round(op, 2))
-        highs.append(round(hi, 2))
-        lows.append(round(lo, 2))
-        closes.append(round(price, 2))
-        volumes.append(int(vol))
-        
-    return pd.DataFrame({'Open': opens, 'High': highs, 'Low': lows, 'Close': closes, 'Volume': volumes})
-
-df = load_simulated_market_data()
+    if df.empty:
+        st.error(f"Gagal mengambil data untuk saham `{ticker_input}`. Pastikan kode saham yang Anda masukkan benar (contoh: BBRI, TLKM, ASII, GOTO).")
+        st.stop()
+else:
+    st.warning("Silakan masukkan kode saham di Sidebar terlebih dahulu.")
+    st.stop()
 
 # ==========================================
 # 3. EXACT PINE SCRIPT LOGIC REPLICATION
@@ -197,7 +192,6 @@ if i_rangeStyle == "Fixed":
 elif i_rangeStyle == "Pivot-based":
     last_pivot_high = df['HighestHigh'].iloc[last_idx]
     last_pivot_low = df['LowestLow'].iloc[last_idx]
-    found_ph, found_pl = False, False
     
     max_safe_lookback = min(i_pivotLookback, 20)
     
@@ -205,14 +199,12 @@ elif i_rangeStyle == "Pivot-based":
     for length_i in range(5, max_safe_lookback + 1):
         if check_is_pivot_high(df, last_idx, length_i, i_pivotStrength):
             last_pivot_high = df['High'].iloc[last_idx - length_i]
-            found_ph = True
             break
             
     # Cari pivot low terakhir dari urutan bar mundur
     for length_i in range(5, max_safe_lookback + 1):
         if check_is_pivot_low(df, last_idx, length_i, i_pivotStrength):
             last_pivot_low = df['Low'].iloc[last_idx - length_i]
-            found_pl = True
             break
             
     upper_range = last_pivot_high
@@ -222,31 +214,38 @@ elif i_rangeStyle == "Pivot-based":
 # 5. STREAMLIT METRICS & DATA OUTPUT (TABLE)
 # ==========================================
 
+st.subheader(f"📈 Hasil Analisis Saham: {ticker_input}")
+
 # Bagian Informasi Utama Rentang Harga Saat Ini
-st.subheader("📐 Trading Range Price Output")
 col1, col2, col3 = st.columns(3)
 with col1:
-    st.metric("Batas Atas Harga (Resistance)", f"USD {upper_range:,.2f}")
+    st.metric("Batas Atas Harga (Resistance)", f"Rp {upper_range:,.00f}")
 with col2:
-    st.metric("Batas Bawah Harga (Support)", f"USD {lower_range:,.2f}")
+    st.metric("Batas Bawah Harga (Support)", f"Rp {lower_range:,.00f}")
 with col3:
     spread = upper_range - lower_range
     spread_pct = (spread / lower_range) * 100
-    st.metric("Lebar Konsolidasi Range", f"USD {spread:,.2f} ({spread_pct:.2f}%)")
+    st.metric("Lebar Konsolidasi Range", f"Rp {spread:,.00f} ({spread_pct:.2f}%)")
 
 st.markdown("---")
 
 # Bagian Tabel Deteksi Utama
 st.subheader("📋 Wyckoff Event Log Table")
 
+# Format tanggal agar mudah dibaca manusia
+df['Date'] = pd.to_datetime(df['Date']).dt.strftime('%Y-%m-%d')
+
 # Format subset dataframe khusus bar yang memicu sinyal/event saja agar rapi
 filtered_df = df[df['Event'] != ""].copy()
-filtered_df['Bar Index'] = filtered_df.index
 
-# Urutkan baris data dari kejadian paling terbaru (Index Terbesar di Atas)
-display_table = filtered_df[['Bar Index', 'Open', 'High', 'Low', 'Close', 'Volume', 'Phase', 'Event']].sort_values(by='Bar Index', ascending=False)
+if not filtered_df.empty:
+    display_table = filtered_df[['Date', 'Open', 'High', 'Low', 'Close', 'Volume', 'Phase', 'Event']].sort_values(by='Date', ascending=False)
+    
+    # Menghilangkan desimal berlebih khusus untuk nominal mata uang rupiah saham IDX
+    for col in ['Open', 'High', 'Low', 'Close']:
+        display_table[col] = display_table[col].map(lambda x: f"Rp {x:,.00f}")
+    display_table['Volume'] = display_table['Volume'].map(lambda x: f"{x:,.00f}")
 
-if not display_table.empty:
     # Styling mewarnai teks sel Event agar mirip dengan visual skema TradingView
     def color_event_row(val):
         if val in ['UT-D', 'BC', 'PSY', 'SOW']:
@@ -258,10 +257,10 @@ if not display_table.empty:
     styled_table = display_table.style.map(color_event_row, subset=['Event'])
     st.dataframe(styled_table, use_container_width=True, hide_index=True)
 else:
-    st.warning("Tidak ada Event Wyckoff yang terdeteksi pada parameter sensitivitas saat ini.")
+    st.warning(f"Tidak ada Event Wyckoff yang terdeteksi pada saham {ticker_input} menggunakan parameter sensitivitas saat ini.")
 
 # Ringkasan Statistik Market State Saat Ini dalam Bentuk Tabel Ringkas
-st.subheader("📊 Market State Summary Table")
+st.subheader("📊 Current Market State")
 state_data = {
     "Kategori Analisis": ["Market Phase Saat Ini", "Estimasi Supply / Demand", "Model Perhitungan Rentang"],
     "Nilai Output": [
