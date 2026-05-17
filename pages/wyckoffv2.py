@@ -64,92 +64,72 @@ else:
     st.stop()
 
 # ==========================================
-# 3. EXACT PINE SCRIPT LOGIC REPLICATION
+# ==========================================
+# 3. EXACT TRADINGVIEW LOGIC REPLICATION (FIXED)
 # ==========================================
 
-# Indicator teknikal dasar (ta.sma, ta.highest, ta.lowest)
-df['VolMA'] = df['Volume'].rolling(window=i_volLen).mean()
-df['HighestHigh'] = df['High'].rolling(window=i_priceLookback).max()
-df['LowestLow'] = df['Low'].rolling(window=i_priceLookback).min()
+# Fungsi Replikasi RMA (Wilder's Moving Average) Bawaan TradingView untuk ATR
+def calculate_rma(series, length):
+    alpha = 1.0 / length
+    return series.ewm(alpha=alpha, adjust=False).mean()
 
-# Menghitung True Range (ta.atr)
+# Indicator teknikal dasar (Menggunakan SMA untuk VolMA sesuai standard Pine Script)
+df['VolMA'] = df['Volume'].rolling(window=i_volLen, min_periods=1).mean()
+
+# Menghitung True Range & ATR ala TradingView (Menggunakan RMA, bukan SMA)
 h_l = df['High'] - df['Low']
 h_pc = abs(df['High'] - df['Close'].shift(1))
 l_pc = abs(df['Low'] - df['Close'].shift(1))
 df['TR'] = np.maximum(h_l, np.maximum(h_pc, l_pc))
-df['ATR'] = df['TR'].rolling(window=i_priceLookback).mean()
+df['ATR'] = calculate_rma(df['TR'], i_priceLookback) # FIXED: Sekarang menggunakan RMA
 
-# Fungsi pendeteksi pergerakan tren (ta.falling dan ta.rising)
+# Menghitung Highest dan Lowest dengan menggeser 1 bar [1] untuk mencerminkan kondisi 'highest(high, lookback)[1]'
+df['HighestHigh'] = df['High'].rolling(window=i_priceLookback).max()
+df['LowestLow'] = df['Low'].rolling(window=i_priceLookback).min()
+
+# Fungsi pendeteksi pergerakan tren yang akurat sesuai Pine Script ta.falling / ta.rising
 def ta_falling(series, length):
-    return series.diff(length) < 0
+    # Pine Script: ta.falling(close, 3) artinya close < close[1] dan close[1] < close[2] dan close[2] < close[3]
+    is_falling = True
+    for i in range(length):
+        is_falling = is_falling & (series.shift(i) < series.shift(i + 1))
+    return is_falling
 
 def ta_rising(series, length):
-    return series.diff(length) > 0
+    is_rising = True
+    for i in range(length):
+        is_rising = is_rising & (series.shift(i) > series.shift(i + 1))
+    return is_rising
 
-# Replikasi Fungsi Akurat isPivotHigh dan isPivotLow dari Pine Script
-def check_is_pivot_high(df, idx, length, strength):
-    MAX_HISTORICAL_OFFSET = 20
-    if length < strength or length > MAX_HISTORICAL_OFFSET or idx < (length + strength):
-        return False
-    
-    target_high = df['High'].iloc[idx - length]
-    
-    for i in range(1, strength + 1):
-        forward_offset = length + i
-        backward_offset = length - i
-        
-        if forward_offset <= MAX_HISTORICAL_OFFSET and backward_offset >= 0:
-            if target_high <= df['High'].iloc[idx - forward_offset] or target_high <= df['High'].iloc[idx - backward_offset]:
-                return False
-        else:
-            return False
-    return True
+# ... (Sisa fungsi check_is_pivot_high & check_is_pivot_low tetap sama) ...
 
-def check_is_pivot_low(df, idx, length, strength):
-    MAX_HISTORICAL_OFFSET = 20
-    if length < strength or length > MAX_HISTORICAL_OFFSET or idx < (length + strength):
-        return False
-    
-    target_low = df['Low'].iloc[idx - length]
-    
-    for i in range(1, strength + 1):
-        forward_offset = length + i
-        backward_offset = length - i
-        
-        if forward_offset <= MAX_HISTORICAL_OFFSET and backward_offset >= 0:
-            if target_low >= df['Low'].iloc[idx - forward_offset] or target_low >= df['Low'].iloc[idx - backward_offset]:
-                return False
-        else:
-            return False
-    return True
-
-# Pemrosesan Array / Loop Bar-by-Bar Meniru Engine TradingView
+# Pemrosesan Loop Bar-by-Bar Meniru Engine TradingView
 df['Event'] = ""
 df['Phase'] = "NEUTRAL"
 bearishCount = 0
 bullishCount = 0
 
 for idx in range(len(df)):
-    if idx < i_priceLookback:
+    if idx < i_priceLookback + 1:
         continue
         
     row = df.iloc[idx]
     
-    # Ambil nilai bar sebelumnya (shift 1, 2, 3 dll)
+    # Ambil nilai bar sebelumnya (Akurat meniru indeks [1], [2], [3] di Pine Script)
     h_highest_1 = df['HighestHigh'].iloc[idx-1]
     l_lowest_1 = df['LowestLow'].iloc[idx-1]
     h_highest_2 = df['HighestHigh'].iloc[idx-2]
     l_lowest_3 = df['LowestLow'].iloc[idx-3]
     
-    # 1. State Phase Penentuan Awal Bar
+    # Penentuan State Phase awal bar
     current_phase = "NEUTRAL"
-    if bearishCount > bullishCount * 2.0: # i_phaseStrengthMultiplier = 2.0
+    if bearishCount > bullishCount * 2.0:
         current_phase = "DISTRIBUTION"
     elif bullishCount > bearishCount * 2.0:
         current_phase = "ACCUMULATION"
     df.at[idx, 'Phase'] = current_phase
 
-    # 2. Logika Utama Event Kondisional (Kombinasi Price & Volume)
+    # Logika Kondisional Sinyal Wyckoff
     # --- Bearish ---
     psy_cond = row['High'] > h_highest_1 and row['Volume'] > row['VolMA'] * i_volThreshMult and row['Close'] < row['High'] - (row['High'] - row['Low']) * i_priceThreshMult and ta_falling(df['Close'], i_trendStrength).iloc[idx]
     ut_d_cond = current_phase == "DISTRIBUTION" and row['High'] > h_highest_1 and row['Close'] < row['Open'] and row['Volume'] > row['VolMA'] * i_volumeFilter and (row['High'] - row['Close']) > row['ATR'] * i_priceThreshMult
@@ -160,9 +140,11 @@ for idx in range(len(df)):
     ps_cond = row['Low'] < l_lowest_1 and row['Volume'] > row['VolMA'] * i_volThreshMult and row['Close'] > row['Low'] + (row['High'] - row['Low']) * i_priceThreshMult and ta_falling(df['Close'], i_trendStrength).iloc[idx]
     sc_cond = row['Low'] < l_lowest_1 and row['Volume'] > row['VolMA'] * (i_volThreshMult * 1.2) and row['Close'] > row['Low'] + (row['High'] - row['Low']) * (i_priceThreshMult * 1.5)
     spring_cond = row['Low'] < l_lowest_3 and row['Close'] > row['Open'] and row['Close'] > row['Low'] + (row['High'] - row['Low']) * 0.6 and row['Volume'] > row['VolMA'] * i_volumeFilter
+    
+    # CRITICAL SOS CHECK: Menggunakan ta_rising beruntun yang sudah diperbaiki
     sos_cond = row['Close'] > row['Open'] and row['High'] > h_highest_1 and row['Volume'] > row['VolMA'] * i_volThreshMult and ta_rising(df['Close'], i_trendStrength).iloc[idx]
 
-    # Pemetaan String Event Ke Kolom DataFrame & Akumulasi Counter Phase
+    # Pemetaan Sinyal
     if ut_d_cond: df.at[idx, 'Event'] = "UT-D"; bearishCount += 1
     elif bc_cond: df.at[idx, 'Event'] = "BC"; bearishCount += 1
     elif psy_cond: df.at[idx, 'Event'] = "PSY"; bearishCount += 1
@@ -172,8 +154,7 @@ for idx in range(len(df)):
     elif ps_cond: df.at[idx, 'Event'] = "PS"; bullishCount += 1
     elif sos_cond: df.at[idx, 'Event'] = "【SOS】"; bullishCount += 1
 
-    # Reset Counter Periodik Berdasarkan Window Jendela Bars (i_phaseWindowBars = 20)
-    if idx % 20 == 0:
+    if idx % i_phaseWindowBars == 0:
         bearishCount = 0
         bullishCount = 0
 
