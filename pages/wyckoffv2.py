@@ -154,9 +154,10 @@ for idx in range(len(df)):
     elif ps_cond: df.at[idx, 'Event'] = "PS"; bullishCount += 1
     elif sos_cond: df.at[idx, 'Event'] = "【SOS】"; bullishCount += 1
 
-    if idx % i_phaseWindowBars == 0:
-        bearishCount = 0
-        bullishCount = 0
+    # BENAR
+if idx % 20 == 0:
+    bearishCount = 0
+    bullishCount = 0
 
 # ==========================================
 # 4. TRADING RANGE PRICE CALCULATION
