@@ -79,6 +79,10 @@ if ticker_input:
     if all_data:
         final_df = pd.concat(all_data, ignore_index=True)
         
+        # Tampilkan Hasil dalam Bentuk Tabel
+    if all_data:
+        final_df = pd.concat(all_data, ignore_index=True)
+        
         st.subheader("📋 Tabel Hasil Analisis Parabolic SAR")
         
         # Fungsi styling warna untuk aksi BUY dan SELL
@@ -87,12 +91,20 @@ if ticker_input:
             text_color = '#155724' if val == 'BUY' else '#721c24'
             return f'background-color: {color}; color: {text_color}; font-weight: bold;'
         
-        # Menerapkan format angka desimal agar rapi
-        styled_df = final_df.style.applymap(color_action, subset=['Aksi Buy/Sell']).format({
-            'Open': '{:,.2f}', 'High': '{:,.2f}', 'Low': '{:,.2f}', 
-            'Volume': '{:,.0f}', 'Signal Parabolic SAR': '{:,.2f}'
-        })
+        # Konversi kolom numerik secara eksplisit untuk menghindari error formatting di Pandas terbaru
+        num_cols = ['Open', 'High', 'Low', 'Volume', 'Signal Parabolic SAR']
+        for col in num_cols:
+            final_df[col] = pd.to_numeric(final_df[col], errors='coerce')
+        
+        # PERBAIKAN DI SINI: Menggunakan .map() sebagai pengganti .applymap()
+        styled_df = final_df.style.map(color_action, subset=['Aksi Buy/Sell']).format({
+            'Open': '{:,.2f}', 
+            'High': '{:,.2f}', 
+            'Low': '{:,.2f}', 
+            'Volume': '{:,.0f}', 
+            'Signal Parabolic SAR': '{:,.2f}'
+        }, na_rep="-")
         
         st.dataframe(styled_df, use_container_width=True, height=600)
     else:
-        st.warning("Tidak ada data yang berhasil diambil atau dihitung. Pastikan koneksi internet aktif dan kode ticker IDX sudah benar.")
+        st.warning("Tidak ada data yang berhasil diambil atau dihitung. Pastikan koneksi internet aktif dan kode ticker IDX sudah benar.")hasil diambil atau dihitung. Pastikan koneksi internet aktif dan kode ticker IDX sudah benar.")
