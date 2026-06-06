@@ -34,7 +34,9 @@ if ticker_input:
         
         try:
             # PENTING: Paksa ambil history 1 tahun agar kalkulasi rumus SAR stabil & akurat seperti TV
-            df = yf.download(yf_ticker, period="1y", progress=False)
+try:
+            # PERBAIKAN: Gunakan auto_adjust=False agar harga Open/High/Low/Close murni seperti chart reguler TradingView
+            df = yf.download(yf_ticker, period="1y", auto_adjust=False, progress=False)
             
             if df.empty:
                 continue
@@ -46,7 +48,14 @@ if ticker_input:
             df = df.reset_index()
             df.columns = [str(col) for col in df.columns]
             
-            # Hitung Parabolic SAR menggunakan pandas_ta (Algoritma J. Welles Wilder)
+            # PENTING: Gunakan kolom 'Close' murni, bukan 'Adj Close'
+            # Pastikan tipe data adalah float
+            df['High'] = df['High'].astype(float)
+            df['Low'] = df['Low'].astype(float)
+            df['Close'] = df['Close'].astype(float)
+            df['Open'] = df['Open'].astype(float)
+            
+            # Hitung Parabolic SAR menggunakan pandas_ta
             psar = ta.psar(df['High'], df['Low'], df['Close'], af0=start, af=increment, max_af=maximum)
             
             if psar is not None and not psar.empty:
