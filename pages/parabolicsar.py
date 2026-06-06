@@ -96,13 +96,13 @@ if ticker_input:
         for col in num_cols:
             final_df[col] = pd.to_numeric(final_df[col], errors='coerce')
         
-        # Menerapkan style warna dan format angka desimal (.map menggantikan .applymap)
+        # PERBAIKAN DI SINI: Mengubah format dari '{:,.2f}' menjadi '{:,.0f}' agar desimal hilang
         styled_df = final_df.style.map(color_action, subset=['Aksi Buy/Sell']).format({
-            'Open': '{:,.2f}', 
-            'High': '{:,.2f}', 
-            'Low': '{:,.2f}', 
+            'Open': '{:,.0f}', 
+            'High': '{:,.0f}', 
+            'Low': '{:,.0f}', 
             'Volume': '{:,.0f}', 
-            'Signal Parabolic SAR': '{:,.2f}'
+            'Signal Parabolic SAR': '{:,.0f}'
         }, na_rep="-")
         
         # Tampilkan ke layar Streamlit
