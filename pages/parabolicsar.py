@@ -76,10 +76,7 @@ if ticker_input:
             st.error(f"Gagal memproses ticker {ticker}: {str(e)}")
 
     # Tampilkan Hasil dalam Bentuk Tabel
-    if all_data:
-        final_df = pd.concat(all_data, ignore_index=True)
-        
-        # Tampilkan Hasil dalam Bentuk Tabel
+  # Tampilkan Hasil dalam Bentuk Tabel
     if all_data:
         final_df = pd.concat(all_data, ignore_index=True)
         
@@ -107,4 +104,4 @@ if ticker_input:
         
         st.dataframe(styled_df, use_container_width=True, height=600)
     else:
-        st.warning("Tidak ada data yang berhasil diambil atau dihitung. Pastikan koneksi internet aktif dan kode ticker IDX sudah benar.")hasil diambil atau dihitung. Pastikan koneksi internet aktif dan kode ticker IDX sudah benar.")
+        st.warning("Tidak ada data yang berhasil diambil atau dihitung. Pastikan koneksi internet aktif dan kode ticker IDX sudah benar.")
